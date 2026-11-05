@@ -135,7 +135,7 @@ class KGuardVpnService : VpnService() {
         if (verdict.blocked && name != null) {
             write(out, DnsPacket.reply(q, DnsPacket.nxDomain(q.dns)))
             val explanation = DomainFilter.explain(verdict, cfg.policy)
-            VpnState.recordBlock(name, verdict.category?.label ?: "Blocked by a parent", explanation)
+            VpnState.recordBlock(name, verdict.category?.label ?: "K-Guard protection", explanation)
             notifyBlocked(explanation)
             val childId = cfg.childId
             if (childId != null) scope.launch { reporter.report(childId, verdict.category, name) }

@@ -261,3 +261,87 @@ class VpnExplainTest {
         assertEquals(Source.RULE, DomainFilter.effective(SafetyCategory.DRUGS, VpnPolicy(AgeProfile.TEENS_13_17, mapOf("drugs" to "allow"))).source)
     }
 }
+
+class VpnAiFilterTest {
+    // The real v0 classifier is pure Kotlin, so the filter is tested end to end without Android.
+    private val filter = DomainFilter(
+        mapOf(SafetyCategory.SEXUAL to setOf("adult.example")),
+        classifier = com.tele.k_guard.vpn.classifier.HeuristicDomainClassifier()
+    )
+
+    private fun policy(age: AgeProfile, rules: Map<String, String> = emptyMap(),
+                       block: Set<String> = emptySet(), allow: Set<String> = emptySet(),
+                       ai: Boolean = true) =
+        VpnPolicy(age, rules, block, allow, aiFilterEnabled = ai)
+
+    @Test fun unlistedAdultDomainIsBlockedByTheClassifierForChildren() {
+        for (age in listOf(AgeProfile.KIDS_3_7, AgeProfile.PRETEENS_8_12, AgeProfile.TEENS_13_17)) {
+            val v = filter.evaluate("pornhub.com", policy(age))
+            assertTrue("pornhub.com must be blocked for ${age.id}", v.blocked)
+            assertEquals(Reason.BLOCKED_AI, v.reason)
+            assertEquals(SafetyCategory.SEXUAL, v.category)
+        }
+    }
+
+    @Test fun theAiVerdictRespectsTheUnder18Lock() {
+        // A parent allowed sexual content, but for minors that rule is locked: the AI block stands.
+        val v = filter.evaluate("pornhub.com", policy(AgeProfile.KIDS_3_7, rules = mapOf("sexual" to "allow")))
+        assertTrue(v.blocked)
+        assertEquals(Reason.BLOCKED_AI, v.reason)
+    }
+
+    @Test fun aParentAllowlistEntryStillBeatsTheClassifier() {
+        val v = filter.evaluate("pornhub.com", policy(AgeProfile.KIDS_3_7, allow = setOf("pornhub.com")))
+        assertFalse(v.blocked)
+        assertEquals(Reason.ALLOWED_PARENT, v.reason)
+    }
+
+    @Test fun turningTheAiFilterOffRestoresListOnlyBehaviour() {
+        val v = filter.evaluate("pornhub.com", policy(AgeProfile.KIDS_3_7, ai = false))
+        assertFalse(v.blocked)
+        assertEquals(Reason.ALLOWED, v.reason)
+    }
+
+    @Test fun aJudgedButUnderThresholdDomainIsAllowedWithAnAiReason() {
+        // Scam signals, but judged for an adult: verdict exists, risk is under the adult threshold.
+        val adult = policy(AgeProfile.ADULTS_18_PLUS)
+        val v = filter.evaluate("hack-giveaway.example", adult)
+        assertFalse(v.blocked)
+        assertEquals(Reason.ALLOWED_AI, v.reason)
+    }
+
+    @Test fun benignDomainsWithoutAVerdictStayPlainlyAllowed() {
+        val v = filter.evaluate("khanacademy.org", policy(AgeProfile.KIDS_3_7))
+        assertFalse(v.blocked)
+        assertEquals(Reason.ALLOWED, v.reason)
+    }
+
+    @Test fun aiExplanationsMentionTheFilter() {
+        val kid = policy(AgeProfile.KIDS_3_7)
+        val blocked = filter.evaluate("pornhub.com", kid)
+        assertTrue(DomainFilter.explain(blocked, kid).contains("AI filter"))
+        val allowed = filter.evaluate("hack-giveaway.example", policy(AgeProfile.ADULTS_18_PLUS))
+        assertTrue(DomainFilter.explain(allowed, policy(AgeProfile.ADULTS_18_PLUS)).contains("AI filter"))
+    }
+
+    @Test fun dohResolversAreHardBlocked() {
+        val f = DomainFilter(
+            emptyMap(),
+            doh = setOf("cloudflare-dns.com", "dns.google"),
+            classifier = com.tele.k_guard.vpn.classifier.HeuristicDomainClassifier()
+        )
+        val p = policy(AgeProfile.KIDS_3_7, allow = setOf("cloudflare-dns.com")) // even a parent allow
+        val v = f.evaluate("dns.cloudflare-dns.com", p)
+        assertTrue(v.blocked)
+        assertEquals(Reason.BLOCKED_DOH, v.reason)
+        assertTrue(DomainFilter.explain(v, p).contains("encrypted-DNS"))
+    }
+
+    @Test fun thePrivateDnsProbeIsAlwaysAnsweredWithNxDomain() {
+        // use-application-dns.net must be blocked even for a parent-allow-everything policy,
+        // otherwise Android Private DNS quietly bypasses the whole filter.
+        val v = filter.evaluate("use-application-dns.net", policy(AgeProfile.KIDS_3_7, allow = setOf("use-application-dns.net")))
+        assertTrue(v.blocked)
+        assertEquals(Reason.BLOCKED_DOH, v.reason)
+    }
+}

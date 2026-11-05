@@ -3,6 +3,7 @@ package com.tele.k_guard.vpn
 import android.content.Context
 import com.tele.k_guard.data.model.AgeProfile
 import com.tele.k_guard.data.model.ChildProfile
+import com.tele.k_guard.vpn.classifier.VerdictCache
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -32,7 +33,8 @@ class VpnConfigStore(context: Context) {
             }.toMap(),
             customBlock = prefs.getStringSet("customBlock", emptySet()) ?: emptySet(),
             customAllow = prefs.getStringSet("customAllow", emptySet()) ?: emptySet(),
-            educationalAllow = prefs.getBoolean("edu", true)
+            educationalAllow = prefs.getBoolean("edu", true),
+            aiFilterEnabled = prefs.getBoolean("ai", true)
         )
     )
 
@@ -42,6 +44,7 @@ class VpnConfigStore(context: Context) {
             .putString("childId", child.id)
             .putString("age", child.ageProfile)
             .putString("rules", child.categoryRules.entries.joinToString(",") { "${it.key}=${it.value}" })
+            .putInt(VerdictCache.GEN_KEY, prefs.getInt(VerdictCache.GEN_KEY, 0) + 1)
             .apply()
         Shared._customBlock.value = load().policy.customBlock
     }
@@ -78,6 +81,15 @@ class VpnConfigStore(context: Context) {
         Shared._educational.value = on
     }
 
+    /**
+     * Turning the AI filter on or off (or changing the child it filters for) invalidates every
+     * cached classifier verdict, because verdicts are judged against this configuration.
+     */
+    fun setAiFilter(on: Boolean) {
+        prefs.edit().putBoolean("ai", on).putInt(VerdictCache.GEN_KEY, prefs.getInt(VerdictCache.GEN_KEY, 0) + 1).apply()
+        Shared._aiFilter.value = on
+    }
+
     private fun cleanDomain(raw: String): String? {
         val d = DomainFilter.normalise(raw.removePrefix("https://").removePrefix("http://").removePrefix("www.").substringBefore('/'))
         return d.takeIf { DOMAIN.matches(it) }
@@ -93,6 +105,7 @@ class VpnConfigStore(context: Context) {
     val customBlock: StateFlow<Set<String>> get() = Shared._customBlock
     val customAllow: StateFlow<Set<String>> get() = Shared._customAllow
     val educationalAllow: StateFlow<Boolean> get() = Shared._educational
+    val aiFilter: StateFlow<Boolean> get() = Shared._aiFilter
 
     /**
      * One shared, app-wide state for every VpnConfigStore instance: the service and the settings
@@ -102,12 +115,14 @@ class VpnConfigStore(context: Context) {
         val _customBlock = MutableStateFlow<Set<String>>(emptySet())
         val _customAllow = MutableStateFlow<Set<String>>(emptySet())
         val _educational = MutableStateFlow(true)
+        val _aiFilter = MutableStateFlow(true)
 
         fun initFrom(prefs: android.content.SharedPreferences) {
             synchronized(this) {
                 _customBlock.value = prefs.getStringSet("customBlock", emptySet()) ?: emptySet()
                 _customAllow.value = prefs.getStringSet("customAllow", emptySet()) ?: emptySet()
                 _educational.value = prefs.getBoolean("edu", true)
+                _aiFilter.value = prefs.getBoolean("ai", true)
             }
         }
 

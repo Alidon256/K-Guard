@@ -1,0 +1,25 @@
+# Encrypted-DNS (DoH/DoT) resolver hostnames, hard-blocked so apps cannot resolve
+# domain names outside K-Guard's filter. Apps with hardcoded resolver IPs are a
+# known residual gap (see docs/spec-web-classifier.md); full coverage needs the
+# deferred SNI/443 interception work.
+cloudflare-dns.com
+one.one.one.one
+dns.google
+dns.quad9.net
+dns9.quad9.net
+dns10.quad9.net
+dns11.quad9.net
+doh.opendns.com
+doh.familyshield.opendns.com
+mozilla.cloudflare-dns.com
+doh.mullvad.net
+doh.sb
+dohdns.net
+dns.adguard-dns.com
+dns.adguard.com
+dns.google.com
+dns.cloudflare.com
+doh.cleanbrowsing.org
+doh.summer.name
+dns.surfsharkdns.com
+doh.applied-privacy.net

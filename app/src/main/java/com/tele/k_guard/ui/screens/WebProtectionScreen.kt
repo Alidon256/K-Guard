@@ -104,7 +104,8 @@ fun WebProtectionContent(
     val customBlock by store.customBlock.collectAsState()
     val customAllow by store.customAllow.collectAsState()
     val edu by store.educationalAllow.collectAsState()
-    val filter = remember(customBlock, customAllow, edu, child?.categoryRules) {
+    val ai by store.aiFilter.collectAsState()
+    val filter = remember(customBlock, customAllow, edu, ai, child?.categoryRules) {
         runCatching { DomainFilter.load(context) }.getOrNull()
     }
 
@@ -246,6 +247,7 @@ private fun CategoriesTab(session: SessionViewModel, store: VpnConfigStore, filt
     val customBlock by store.customBlock.collectAsState()
     val customAllow by store.customAllow.collectAsState()
     val edu by store.educationalAllow.collectAsState()
+    val ai by store.aiFilter.collectAsState()
     val busy by session.busy.collectAsState()
     var blockInput by remember { mutableStateOf("") }
     var allowInput by remember { mutableStateOf("") }
@@ -318,6 +320,17 @@ private fun CategoriesTab(session: SessionViewModel, store: VpnConfigStore, filt
                 Modifier.weight(1f), style = MaterialTheme.typography.bodySmall
             )
             Switch(checked = edu, onCheckedChange = { store.setEducationalAllow(it) })
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        Text("AI website filter", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "When ${c.name} opens a site that is on no list, K-Guard judges it on this device — offline — and blocks it if it looks unsuitable for the ${c.age.title} profile. Parent allow/block lists always win.",
+                Modifier.weight(1f), style = MaterialTheme.typography.bodySmall
+            )
+            Switch(checked = ai, onCheckedChange = { store.setAiFilter(it) })
         }
 
         Spacer(Modifier.height(12.dp))

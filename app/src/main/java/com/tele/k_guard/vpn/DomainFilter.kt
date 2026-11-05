@@ -5,6 +5,10 @@ import android.util.Log
 import com.tele.k_guard.data.model.AgeProfile
 import com.tele.k_guard.data.model.CategoryRule
 import com.tele.k_guard.data.model.SafetyCategory
+import com.tele.k_guard.vpn.classifier.CachedDomainClassifier
+import com.tele.k_guard.vpn.classifier.DomainClassifier
+import com.tele.k_guard.vpn.classifier.HeuristicDomainClassifier
+import com.tele.k_guard.vpn.classifier.VerdictCache
 
 /** What the filter needs to know about the protected child. */
 data class VpnPolicy(
@@ -13,12 +17,14 @@ data class VpnPolicy(
     val customBlock: Set<String> = emptySet(),
     val customAllow: Set<String> = emptySet(),
     /** Let recognised educational sites through even if a category list would block them. */
-    val educationalAllow: Boolean = true
+    val educationalAllow: Boolean = true,
+    /** Judge unlisted domains with the on-device AI filter (see docs/spec-web-classifier.md). */
+    val aiFilterEnabled: Boolean = true
 )
 
 enum class Reason {
-    ALLOWED, ALLOWED_LISTED, ALLOWED_PARENT, ALLOWED_EDUCATIONAL, ALLOWED_BY_RULE,
-    BLOCKED_CUSTOM, BLOCKED_AGE, BLOCKED_RULE, BLOCKED_LOCKED
+    ALLOWED, ALLOWED_LISTED, ALLOWED_PARENT, ALLOWED_EDUCATIONAL, ALLOWED_BY_RULE, ALLOWED_AI,
+    BLOCKED_CUSTOM, BLOCKED_AGE, BLOCKED_RULE, BLOCKED_LOCKED, BLOCKED_AI, BLOCKED_DOH
 }
 
 data class Verdict(
@@ -38,6 +44,10 @@ data class Effective(val blocked: Boolean, val source: Source)
 class DomainFilter(
     private val lists: Map<SafetyCategory, Set<String>>,
     private val educational: Set<String> = emptySet(),
+    /** Hostnames of encrypted-DNS resolvers, always blocked so filtering cannot be bypassed. */
+    private val doh: Set<String> = emptySet(),
+    /** On-device judge for domains on no list; null disables the AI step entirely. */
+    private val classifier: DomainClassifier? = null,
     /** True when a blocklist asset was missing or unreadable, so a category may not be filtered at all. */
     val hadLoadErrors: Boolean = false
 ) {
@@ -47,6 +57,14 @@ class DomainFilter(
     fun evaluate(rawDomain: String, policy: VpnPolicy): Verdict {
         val domain = normalise(rawDomain)
         if (domain.isEmpty()) return Verdict(false)
+
+        // Android's Private-DNS probe: NXDOMAIN makes the system give up on encrypted DNS,
+        // so lookups re-enter this filter instead of bypassing it.
+        if (domain == "use-application-dns.net") return Verdict(true, reason = Reason.BLOCKED_DOH)
+
+        // Encrypted-DNS resolvers are protective infrastructure: they are not content, so no
+        // allowlist may re-enable them.
+        if (matches(domain, doh)) return Verdict(true, reason = Reason.BLOCKED_DOH)
 
         if (matches(domain, policy.customAllow)) return Verdict(false, reason = Reason.ALLOWED_PARENT)
         if (matches(domain, policy.customBlock)) return Verdict(true, custom = true, reason = Reason.BLOCKED_CUSTOM)
@@ -60,7 +78,7 @@ class DomainFilter(
         val blocking = matched.filter { it.second.blocked }
         // Explain with the strongest authority: locked, then parent rule, then age default.
         val chosen = (if (blocking.isNotEmpty()) blocking else matched).minByOrNull { rank(it.second) }
-            ?: return Verdict(false)
+            ?: return classifyFallback(domain, policy)
 
         val category = chosen.first
         val e = chosen.second
@@ -72,6 +90,24 @@ class DomainFilter(
             else -> Reason.ALLOWED_LISTED // on a list, but the age profile allows it
         }
         return Verdict(e.blocked, category, reason = reason)
+    }
+
+    /**
+     * Nothing listed the domain, so the on-device classifier judges it. The verdict's graded
+     * risk is checked against the age threshold (mirroring `functions/src/policy.ts`), and only
+     * then against the same category rules a listed domain would face — so a parent's Allow
+     * stays authoritative even for a high-risk verdict. An unsure classifier leaves the site
+     * allowed, exactly as before this feature existed.
+     */
+    private fun classifyFallback(domain: String, policy: VpnPolicy): Verdict {
+        val verdict = classifier?.takeIf { policy.aiFilterEnabled }
+            ?.classify(domain, policy.ageProfile) ?: return Verdict(false)
+        if (verdict.riskScore < HeuristicDomainClassifier.threshold(policy.ageProfile)) {
+            return Verdict(false, verdict.category, reason = Reason.ALLOWED_AI)
+        }
+        val eff = effective(verdict.category, policy)
+        return if (eff.blocked) Verdict(true, verdict.category, reason = Reason.BLOCKED_AI)
+        else Verdict(false, verdict.category, reason = Reason.ALLOWED_AI)
     }
 
     companion object {
@@ -109,6 +145,9 @@ class DomainFilter(
                 Reason.ALLOWED_BY_RULE -> "Allowed: a parent allows $what for this profile."
                 Reason.ALLOWED_LISTED -> "Found in the $what list — allowed by the ${policy.ageProfile.title} profile. The lists are limited, so this is not a guarantee of safety."
                 Reason.ALLOWED -> "Allowed: nothing found in K-Guard's site lists. The lists are limited, so this is not a guarantee of safety."
+                Reason.BLOCKED_AI -> "Blocked: the K-Guard AI filter judged this site to be $what — it was on no list, but it doesn't look suitable for ${policy.ageProfile.ageRange.replaceFirstChar { it.lowercase() }}."
+                Reason.ALLOWED_AI -> "The AI filter checked this site and found no clear problems for the ${policy.ageProfile.title} profile. This is not a guarantee of safety."
+                Reason.BLOCKED_DOH -> "Blocked: encrypted-DNS resolvers are not allowed while protection is on, so K-Guard can keep filtering websites."
             }
         }
 
@@ -158,7 +197,8 @@ class DomainFilter(
                 emptySet()
             }
 
-        /** Loads `assets/blocklists/<category id>.txt` per category plus `educational.txt`. */
+        /** Loads `assets/blocklists/<category id>.txt` per category, plus `educational.txt`,
+         *  `doh.txt`, and wires the on-device classifier (cached across instances). */
         fun load(context: Context): DomainFilter {
             val map = LinkedHashMap<SafetyCategory, Set<String>>()
             val errors = ArrayList<String>()
@@ -166,7 +206,14 @@ class DomainFilter(
                 val set = readAsset(context, c.id, errors)
                 if (set.isNotEmpty()) map[c] = set
             }
-            return DomainFilter(map, readAsset(context, "educational", errors), hadLoadErrors = errors.isNotEmpty())
+            val classifier = CachedDomainClassifier(HeuristicDomainClassifier(), VerdictCache.from(context))
+            return DomainFilter(
+                map,
+                readAsset(context, "educational", errors),
+                doh = readAsset(context, "doh", errors),
+                classifier = classifier,
+                hadLoadErrors = errors.isNotEmpty()
+            )
         }
     }
 }
