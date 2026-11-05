@@ -247,6 +247,49 @@ export const reportWebBlock = onCall(async (req) => {
   return { ok: true };
 });
 
+// ---------------------------------------------------------------- remote device commands
+export const sendDeviceCommand = onCall(async (req) => {
+  const uid = requireAuth(req);
+  const user = await userDoc(uid);
+  if (user.role !== "parent" || !user.familyId) throw new HttpsError("permission-denied", "Parents only.");
+
+  const childId = String(req.data?.childId ?? "");
+  const action = String(req.data?.action ?? "");
+  const reason = String(req.data?.reason ?? "Parent Command");
+
+  const childSnap = await db.doc(`families/${user.familyId}/children/${childId}`).get();
+  if (!childSnap.exists) throw new HttpsError("not-found", "Child not found.");
+  const child = childSnap.data() as any;
+
+  const cmdRef = await db.collection(`families/${user.familyId}/commands`).add({
+    childId,
+    action,
+    reason,
+    sentBy: uid,
+    createdAt: FieldValue.serverTimestamp(),
+    status: "dispatched",
+  });
+
+  if (child.linkedUid) {
+    const childUser = (await db.doc(`users/${child.linkedUid}`).get()).data() as any;
+    const tokens = childUser?.fcmTokens ?? [];
+    if (tokens.length > 0) {
+      await getMessaging().sendEachForMulticast({
+        tokens,
+        data: {
+          action,
+          reason,
+          childName: child.name ?? "Child",
+          commandId: cmdRef.id,
+        },
+        android: { priority: "high" },
+      });
+    }
+  }
+
+  return { ok: true, commandId: cmdRef.id };
+});
+
 function sanitiseRules(raw: unknown): Partial<Record<Category, Rule>> {
   const out: Partial<Record<Category, Rule>> = {};
   if (!raw || typeof raw !== "object") return out;

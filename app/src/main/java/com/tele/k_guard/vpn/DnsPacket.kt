@@ -12,6 +12,7 @@ object DnsPacket {
         val dns: ByteArray
     ) {
         val name: String? get() = parseName(dns)
+        val qtype: Int? get() = parseQType(dns)
     }
 
     /** Returns the DNS query in an IPv4 UDP packet addressed to port 53, or null for anything else. */
@@ -55,6 +56,27 @@ object DnsPacket {
             pos += len + 1
         }
         return sb.toString().lowercase()
+    }
+
+    /** Record type of the first question (1 = A, 28 = AAAA, ...), or null if the message is malformed. */
+    fun parseQType(dns: ByteArray): Int? {
+        if (dns.size < 13) return null
+        var pos = 12
+        while (true) {
+            if (pos >= dns.size) return null
+            val len = dns[pos].toInt() and 0xff
+            if (len == 0) break
+            if (len and 0xC0 != 0 || len > 63) return null
+            pos += len + 1
+        }
+        if (pos + 5 > dns.size) return null // null label + QTYPE + QCLASS
+        return u16(dns, pos + 1)
+    }
+
+    fun typeName(type: Int): String = when (type) {
+        1 -> "A"; 2 -> "NS"; 5 -> "CNAME"; 6 -> "SOA"; 12 -> "PTR"; 15 -> "MX"; 16 -> "TXT"
+        28 -> "AAAA"; 33 -> "SRV"; 64 -> "SVCB"; 65 -> "HTTPS"
+        else -> "TYPE$type"
     }
 
     /** Builds an NXDOMAIN response for the given query (same id and question, no answers). */

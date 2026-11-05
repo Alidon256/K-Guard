@@ -127,8 +127,8 @@ fun HomeScreen(
             PillarHeader(pillar = "MANAGE", title = "Digital Habits")
             Spacer(modifier = Modifier.height(8.dp))
             DashboardToolCard(
-                title = "Screen Time Management",
-                description = "Daily limits, bedtime schedules, and age-aware usage guidance.",
+                title = "Screen Time & Device Controls",
+                description = "Live phone telemetry, app breakdown, and remote screen switch-off.",
                 icon = Icons.Default.Timer,
                 badgeColor = Color(0xFF1E88E5),
                 onClick = onNavigateToScreenTime
