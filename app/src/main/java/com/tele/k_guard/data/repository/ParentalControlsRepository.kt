@@ -1,13 +1,19 @@
 package com.tele.k_guard.data.repository
 
+import android.util.Log
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.SetOptions
 import com.google.firebase.functions.FirebaseFunctions
 import com.tele.k_guard.data.model.AppAccessInfo
 import com.tele.k_guard.data.model.AppApprovalStatus
+import com.tele.k_guard.data.model.ChildDevice
+import com.tele.k_guard.data.model.DeviceLockState
+import com.tele.k_guard.data.model.RemoteAction
+import com.tele.k_guard.data.model.RemoteCommand
 import com.tele.k_guard.data.model.ScreenTimeConfig
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -80,9 +86,178 @@ object ParentalControlsRepository {
     private val _demoApps = MutableStateFlow(initialApps)
     val managedApps: StateFlow<List<AppAccessInfo>> = _demoApps.asStateFlow()
 
+    private val _demoDevices = MutableStateFlow(
+        mapOf(
+            "c1" to ChildDevice(deviceId = "dev_c1", childId = "c1", childName = "Ama", deviceName = "Ama's Phone", deviceModel = "Pixel 7", usedScreenTimeMinutes = 45, dailyLimitMinutes = 120),
+            "c2" to ChildDevice(deviceId = "dev_c2", childId = "c2", childName = "Kofi", deviceName = "Kofi's Tablet", deviceModel = "Galaxy Tab", usedScreenTimeMinutes = 90, dailyLimitMinutes = 150)
+        )
+    )
+
+    private val _demoCommands = MutableStateFlow<List<RemoteCommand>>(emptyList())
+
+    /**
+     * Real-time stream of device telemetry for a child.
+     */
+    fun deviceStream(familyId: String, childId: String, childName: String): Flow<ChildDevice> = callbackFlow {
+        if (familyId == "demo") {
+            val dev = _demoDevices.value[childId] ?: ChildDevice(childId = childId, childName = childName)
+            trySend(dev)
+            val reg = _demoDevices.collect { map ->
+                trySend(map[childId] ?: ChildDevice(childId = childId, childName = childName))
+            }
+            awaitClose { }
+            return@callbackFlow
+        }
+
+        val ref = db.document("families/$familyId/devices/$childId")
+        val reg = ref.addSnapshotListener { snap, err ->
+            if (err != null || snap == null || !snap.exists()) {
+                val defaultDev = ChildDevice(childId = childId, childName = childName)
+                trySend(defaultDev)
+                return@addSnapshotListener
+            }
+            val data = snap.data
+            val dev = ChildDevice(
+                deviceId = data?.get("deviceId") as? String ?: "dev_$childId",
+                childId = childId,
+                childName = data?.get("childName") as? String ?: childName,
+                deviceName = data?.get("deviceName") as? String ?: "$childName's Phone",
+                deviceModel = data?.get("deviceModel") as? String ?: "Android Device",
+                androidVersion = data?.get("androidVersion") as? String ?: "Android 14",
+                isOnline = data?.get("isOnline") as? Boolean ?: true,
+                batteryPercent = (data?.get("batteryPercent") as? Number)?.toInt() ?: 85,
+                isCharging = data?.get("isCharging") as? Boolean ?: false,
+                networkName = data?.get("networkName") as? String ?: "Wi-Fi",
+                lockState = DeviceLockState.entries.find { it.id == data?.get("lockState") as? String } ?: DeviceLockState.ACTIVE_UNLOCKED,
+                usedScreenTimeMinutes = (data?.get("usedScreenTimeMinutes") as? Number)?.toInt() ?: 45,
+                dailyLimitMinutes = (data?.get("dailyLimitMinutes") as? Number)?.toInt() ?: 120,
+                pickupsCount = (data?.get("pickupsCount") as? Number)?.toInt() ?: 20,
+                bedtimeStart = data?.get("bedtimeStart") as? String ?: "21:00",
+                bedtimeEnd = data?.get("bedtimeEnd") as? String ?: "07:00",
+                bedtimeEnabled = data?.get("bedtimeEnabled") as? Boolean ?: true,
+                schoolStart = data?.get("schoolStart") as? String ?: "08:30",
+                schoolEnd = data?.get("schoolEnd") as? String ?: "15:30",
+                schoolEnabled = data?.get("schoolEnabled") as? Boolean ?: true
+            )
+            trySend(dev)
+        }
+        awaitClose { reg.remove() }
+    }
+
+    /**
+     * Real-time stream of command audit logs.
+     */
+    fun commandsStream(familyId: String, childId: String): Flow<List<RemoteCommand>> = callbackFlow {
+        if (familyId == "demo") {
+            trySend(_demoCommands.value.filter { it.childId.isEmpty() || it.childId == childId })
+            val reg = _demoCommands.collect { list ->
+                trySend(list.filter { it.childId.isEmpty() || it.childId == childId })
+            }
+            awaitClose { }
+            return@callbackFlow
+        }
+
+        val reg = db.collection("families/$familyId/commands")
+            .whereEqualTo("childId", childId)
+            .orderBy("timestamp", Query.Direction.DESCENDING)
+            .limit(50)
+            .addSnapshotListener { snap, err ->
+                if (err != null) {
+                    trySend(emptyList())
+                    return@addSnapshotListener
+                }
+                val cmds = snap?.documents?.mapNotNull { doc ->
+                    val data = doc.data ?: return@mapNotNull null
+                    RemoteCommand(
+                        id = doc.id,
+                        childId = data["childId"] as? String ?: childId,
+                        childName = data["childName"] as? String ?: "",
+                        action = RemoteAction.entries.find { it.id == data["action"] as? String } ?: RemoteAction.SWITCH_OFF_LOCK,
+                        description = data["description"] as? String ?: "",
+                        reason = data["reason"] as? String,
+                        timestamp = (data["timestamp"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+                        status = data["status"] as? String ?: "Executed"
+                    )
+                } ?: emptyList()
+                trySend(cmds)
+            }
+        awaitClose { reg.remove() }
+    }
+
+    /**
+     * Send remote command (Switch off, Unlock, Alarm, Limit, Bedtime, School).
+     */
+    suspend fun sendRemoteCommand(
+        familyId: String,
+        childId: String,
+        childName: String,
+        action: RemoteAction,
+        description: String,
+        reason: String? = null,
+        updates: Map<String, Any?> = emptyMap()
+    ) {
+        Log.d("KGuard", "ParentalControlsRepository: sendRemoteCommand action=${action.id} for child=$childName")
+        if (familyId == "demo") {
+            val cmd = RemoteCommand(
+                id = "cmd_${System.currentTimeMillis()}",
+                childId = childId,
+                childName = childName,
+                action = action,
+                description = description,
+                reason = reason,
+                timestamp = System.currentTimeMillis()
+            )
+            _demoCommands.value = listOf(cmd) + _demoCommands.value
+            val currentDev = _demoDevices.value[childId] ?: ChildDevice(childId = childId, childName = childName)
+            val updatedDev = when (action) {
+                RemoteAction.SWITCH_OFF_LOCK -> currentDev.copy(lockState = DeviceLockState.REMOTE_LOCKED, lockReason = reason)
+                RemoteAction.UNLOCK_DEVICE -> currentDev.copy(lockState = DeviceLockState.ACTIVE_UNLOCKED, lockReason = null)
+                RemoteAction.ADD_BONUS_TIME -> {
+                    val bonus = (updates["bonusMinutes"] as? Number)?.toInt() ?: 30
+                    currentDev.copy(dailyLimitMinutes = currentDev.dailyLimitMinutes + bonus)
+                }
+                RemoteAction.TOGGLE_BEDTIME -> {
+                    val enabled = updates["bedtimeEnabled"] as? Boolean ?: currentDev.bedtimeEnabled
+                    currentDev.copy(bedtimeEnabled = enabled)
+                }
+                RemoteAction.TOGGLE_SCHOOL_MODE -> {
+                    val enabled = updates["schoolEnabled"] as? Boolean ?: currentDev.schoolEnabled
+                    currentDev.copy(schoolEnabled = enabled)
+                }
+                else -> currentDev
+            }
+            val finalDev = if (updates["dailyLimitMinutes"] != null) {
+                updatedDev.copy(dailyLimitMinutes = (updates["dailyLimitMinutes"] as Number).toInt())
+            } else {
+                updatedDev
+            }
+            _demoDevices.value = _demoDevices.value + (childId to finalDev)
+            return
+        }
+
+        val batch = db.batch()
+        val cmdRef = db.collection("families/$familyId/commands").document()
+        val cmdData = mapOf(
+            "childId" to childId,
+            "childName" to childName,
+            "action" to action.id,
+            "description" to description,
+            "reason" to (reason ?: ""),
+            "timestamp" to System.currentTimeMillis(),
+            "status" to "Delivered & Applied"
+        )
+        batch.set(cmdRef, cmdData)
+
+        val devRef = db.document("families/$familyId/devices/$childId")
+        if (updates.isNotEmpty()) {
+            batch.set(devRef, updates, SetOptions.merge())
+        }
+        batch.commit().await()
+        Log.d("KGuard", "ParentalControlsRepository: sendRemoteCommand success")
+    }
+
     /**
      * Real-time stream of apps for a given family from Firestore.
-     * Optionally filtered by childId.
      */
     fun appsStream(familyId: String, childId: String? = null): Flow<List<AppAccessInfo>> = callbackFlow {
         if (familyId == "demo") {
@@ -104,7 +279,6 @@ object ParentalControlsRepository {
 
         val reg = query.addSnapshotListener { snap, err ->
             if (err != null) {
-                // In case composite index is deploying or fallback needed
                 val fallbackReg = db.collection("families/$familyId/apps").addSnapshotListener { fallbackSnap, fallbackErr ->
                     if (fallbackErr != null) {
                         trySend(_demoApps.value)
@@ -150,9 +324,6 @@ object ParentalControlsRepository {
         )
     }
 
-    /**
-     * Submit an app approval request from a child or parent.
-     */
     suspend fun requestAppApproval(
         familyId: String,
         childId: String,
@@ -196,9 +367,6 @@ object ParentalControlsRepository {
         return res.data as Map<String, Any?>
     }
 
-    /**
-     * Parent responds to an app install request (APPROVE or REJECT).
-     */
     suspend fun respondToAppApproval(
         familyId: String,
         appId: String,
@@ -234,9 +402,6 @@ object ParentalControlsRepository {
         }
     }
 
-    /**
-     * Update an app's daily usage limit in minutes.
-     */
     suspend fun updateAppLimit(familyId: String, appId: String, limitMinutes: Int) {
         if (familyId == "demo") {
             _demoApps.value = _demoApps.value.map { app ->
