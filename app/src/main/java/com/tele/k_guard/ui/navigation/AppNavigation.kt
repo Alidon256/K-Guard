@@ -21,6 +21,7 @@ import androidx.navigation.navArgument
 import com.tele.k_guard.data.model.AppApprovalStatus
 import com.tele.k_guard.data.repository.UserPreferencesRepository
 import com.tele.k_guard.ui.screens.AgeProfileScreen
+import com.tele.k_guard.ui.screens.AppDetailScreen
 import com.tele.k_guard.ui.screens.AppManagementScreen
 import com.tele.k_guard.ui.screens.ChildDashboardScreen
 import com.tele.k_guard.ui.screens.ChildEditorScreen
@@ -30,6 +31,7 @@ import com.tele.k_guard.ui.screens.HomeScreen
 import com.tele.k_guard.ui.screens.ImageModerationScreen
 import com.tele.k_guard.ui.screens.OnboardingScreen
 import com.tele.k_guard.ui.screens.PrivacyScreen
+import com.tele.k_guard.ui.screens.ProfileScreen
 import com.tele.k_guard.ui.screens.ReviewQueueScreen
 import com.tele.k_guard.ui.screens.ScreenTimeScreen
 import com.tele.k_guard.ui.screens.SignInScreen
@@ -65,6 +67,9 @@ fun AppNavigation(
     val openAlerts by session.openAlertCount.collectAsState()
     val familyId by session.familyId.collectAsState()
     val children by session.children.collectAsState()
+
+    val isChildDevice by userPreferencesRepository.isChildDeviceFlow.collectAsState(initial = false)
+    val parentPinHash by userPreferencesRepository.parentPinHashFlow.collectAsState(initial = null)
 
     // The selected child's age group drives every check; before any child exists, fall back to the device setting.
     val activeAgeProfile = selectedChild?.age ?: devicePreferredProfile
@@ -107,9 +112,19 @@ fun AppNavigation(
         return
     }
 
+    val startDestination = com.tele.k_guard.DebugPreview.startRoute?.takeIf { signedIn } ?: if (signedIn) {
+        if (isChildDevice) {
+            if (parentPinHash.isNullOrBlank()) Screen.ChildPinSetup.route else Screen.ChildDashboard.route
+        } else {
+            Screen.Home.route
+        }
+    } else {
+        Screen.Onboarding.route
+    }
+
     NavHost(
         navController = navController,
-        startDestination = com.tele.k_guard.DebugPreview.startRoute?.takeIf { signedIn } ?: if (signedIn) Screen.Home.route else Screen.Onboarding.route
+        startDestination = startDestination
     ) {
         composable(Screen.Onboarding.route) {
             OnboardingScreen(
@@ -120,6 +135,9 @@ fun AppNavigation(
         composable(Screen.SignIn.route) {
             SignInScreen(
                 session = session,
+                onParentSignedIn = {
+                    navController.navigate(Screen.Home.route) { popUpTo(0) }
+                },
                 onChildPaired = {
                     navController.navigate(Screen.ChildPinSetup.route) { popUpTo(0) }
                 }
@@ -140,7 +158,22 @@ fun AppNavigation(
 
         composable(Screen.ChildDashboard.route) {
             ChildDashboardScreen(
-                childProfile = selectedChild
+                childProfile = selectedChild,
+                onNavigateToProfile = { navController.navigate(Screen.Profile.route) }
+            )
+        }
+
+        composable(Screen.Profile.route) {
+            ProfileScreen(
+                session = session,
+                isChildDevice = isChildDevice,
+                onSignOut = {
+                    scope.launch {
+                        userPreferencesRepository.saveChildDeviceMode(false)
+                        navController.navigate(Screen.SignIn.route) { popUpTo(0) }
+                    }
+                },
+                onNavigateBack = { navController.popBackStack() }
             )
         }
 
@@ -165,7 +198,8 @@ fun AppNavigation(
                 onNavigateToAppManagement = { navController.navigate(Screen.AppManagement.route) },
                 onNavigateToFlaggedContent = { navController.navigate(Screen.ReviewQueue.route) },
                 onNavigateToPrivacy = { navController.navigate(Screen.Privacy.route) },
-                onNavigateToWebProtection = { navController.navigate(Screen.WebProtection.route) }
+                onNavigateToWebProtection = { navController.navigate(Screen.WebProtection.route) },
+                onNavigateToProfile = { navController.navigate(Screen.Profile.route) }
             )
         }
 
@@ -222,6 +256,19 @@ fun AppNavigation(
                 activeChild = selectedChild,
                 children = children,
                 familyId = familyId,
+                onNavigateToAppDetail = { appId -> navController.navigate(Screen.AppDetail.create(appId)) },
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(
+            route = Screen.AppDetail.route,
+            arguments = listOf(navArgument("appId") { type = NavType.StringType })
+        ) { entry ->
+            val appId = entry.arguments?.getString("appId") ?: ""
+            AppDetailScreen(
+                appId = appId,
+                viewModel = appManagementViewModel,
                 onNavigateBack = { navController.popBackStack() }
             )
         }

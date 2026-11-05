@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -58,13 +59,22 @@ fun HomeScreen(
     openAlertCount: Int = 0,
     pendingApprovalCount: Int = 0,
     onNavigateToPrivacy: () -> Unit = {},
-    onNavigateToWebProtection: () -> Unit = {}
+    onNavigateToWebProtection: () -> Unit = {},
+    onNavigateToProfile: () -> Unit = {}
 ) {
     Scaffold(
         topBar = {
             KGuardTopAppBar(
                 title = "K-Guard Dashboard",
-                canNavigateBack = false
+                canNavigateBack = false,
+                actions = {
+                    IconButton(onClick = onNavigateToProfile) {
+                        Icon(
+                            imageVector = Icons.Default.Person,
+                            contentDescription = "Profile"
+                        )
+                    }
+                }
             )
         }
     ) { innerPadding ->

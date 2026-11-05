@@ -18,4 +18,8 @@ sealed class Screen(val route: String) {
     object WebProtection : Screen("web_protection")
     object ChildPinSetup : Screen("child_pin_setup")
     object ChildDashboard : Screen("child_dashboard")
+    object AppDetail : Screen("app_detail?appId={appId}") {
+        fun create(appId: String) = "app_detail?appId=$appId"
+    }
+    object Profile : Screen("profile")
 }

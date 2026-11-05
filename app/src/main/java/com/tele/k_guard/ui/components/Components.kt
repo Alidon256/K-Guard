@@ -58,7 +58,8 @@ import com.tele.k_guard.data.model.ModerationResponse
 fun KGuardTopAppBar(
     title: String,
     canNavigateBack: Boolean = false,
-    onNavigateBack: () -> Unit = {}
+    onNavigateBack: () -> Unit = {},
+    actions: @Composable () -> Unit = {}
 ) {
     TopAppBar(
         title = {
@@ -78,6 +79,7 @@ fun KGuardTopAppBar(
                 }
             }
         },
+        actions = { actions() },
         colors = TopAppBarDefaults.topAppBarColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
         )

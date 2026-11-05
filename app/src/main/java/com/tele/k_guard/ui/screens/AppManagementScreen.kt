@@ -3,6 +3,7 @@ package com.tele.k_guard.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,15 +18,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.HourglassTop
-import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Shield
@@ -81,6 +82,7 @@ fun AppManagementScreen(
     activeChild: ChildProfile? = null,
     children: List<ChildProfile> = emptyList(),
     familyId: String? = null,
+    onNavigateToAppDetail: (String) -> Unit = {},
     onNavigateBack: () -> Unit
 ) {
     val managedApps by viewModel.managedApps.collectAsState()
@@ -108,6 +110,7 @@ fun AppManagementScreen(
         onRequestInstall = { childId, name, pkg, cat, minAge, limit ->
             viewModel.requestAppInstall(familyId, childId, name, pkg, cat, minAge, limit)
         },
+        onNavigateToAppDetail = onNavigateToAppDetail,
         onNavigateBack = onNavigateBack
     )
 }
@@ -127,6 +130,7 @@ fun AppManagementContent(
     onReject: (String) -> Unit,
     onUpdateLimit: (String, Int) -> Unit = { _, _ -> },
     onRequestInstall: (String, String, String, String, Int, Int) -> Unit = { _, _, _, _, _, _ -> },
+    onNavigateToAppDetail: (String) -> Unit = {},
     onNavigateBack: () -> Unit
 ) {
     var selectedFilter by remember { mutableStateOf<AppApprovalStatus?>(null) }
@@ -251,7 +255,8 @@ fun AppManagementContent(
                         FilterChip(
                             selected = selectedChildId == c.id,
                             onClick = { selectedChildId = c.id },
-                            label = { Text(c.name) }
+                            label = { Text(c.name) },
+                            leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(16.dp)) }
                         )
                     }
                 }
@@ -346,7 +351,8 @@ fun AppManagementContent(
                             app = app,
                             onApprove = { onApprove(app.id) },
                             onReject = { onReject(app.id) },
-                            onEditLimit = { editingAppLimit = app }
+                            onEditLimit = { editingAppLimit = app },
+                            onNavigateToDetail = { onNavigateToAppDetail(app.id) }
                         )
                     }
                     item { Spacer(modifier = Modifier.height(80.dp)) }
@@ -359,7 +365,7 @@ fun AppManagementContent(
     if (showRequestDialog) {
         RequestAppDialog(
             children = children,
-            activeChildId = selectedChildId ?: activeChild?.id ?: children.firstOrNull()?.id ?: "",
+            activeChildId = selectedChildId ?: children.firstOrNull()?.id ?: "",
             onDismiss = { showRequestDialog = false },
             onSubmit = { childId, name, pkg, cat, minAge, limit ->
                 onRequestInstall(childId, name, pkg, cat, minAge, limit)
@@ -369,13 +375,35 @@ fun AppManagementContent(
     }
 
     // Dialog for editing daily limit
-    editingAppLimit?.let { app ->
-        AppLimitDialog(
-            app = app,
-            onDismiss = { editingAppLimit = null },
-            onSave = { newLimit ->
-                onUpdateLimit(app.id, newLimit)
-                editingAppLimit = null
+    if (editingAppLimit != null) {
+        val app = editingAppLimit!!
+        var limitSlider by remember { mutableFloatStateOf(app.dailyLimitMinutes.toFloat()) }
+        AlertDialog(
+            onDismissRequest = { editingAppLimit = null },
+            title = { Text("Set Daily Limit for ${app.appName}") },
+            text = {
+                Column {
+                    Text("Choose maximum daily screen time for this application:")
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("${limitSlider.toInt()} minutes", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    Slider(
+                        value = limitSlider,
+                        onValueChange = { limitSlider = it },
+                        valueRange = 10f..180f,
+                        steps = 17
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    onUpdateLimit(app.id, limitSlider.toInt())
+                    editingAppLimit = null
+                }) {
+                    Text("Save Limit")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingAppLimit = null }) { Text("Cancel") }
             }
         )
     }
@@ -386,7 +414,8 @@ private fun ManagedAppCard(
     app: AppAccessInfo,
     onApprove: () -> Unit,
     onReject: () -> Unit,
-    onEditLimit: () -> Unit
+    onEditLimit: () -> Unit,
+    onNavigateToDetail: () -> Unit
 ) {
     val isPending = app.approvalStatus == AppApprovalStatus.PENDING_REVIEW
     val cardBorder = if (isPending) Modifier.border(1.5.dp, Color(0xFFE65100), RoundedCornerShape(16.dp)) else Modifier
@@ -394,6 +423,7 @@ private fun ManagedAppCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .clickable { onNavigateToDetail() }
             .then(cardBorder),
         elevation = CardDefaults.cardElevation(defaultElevation = if (isPending) 4.dp else 2.dp),
         shape = RoundedCornerShape(16.dp),
@@ -601,27 +631,24 @@ private fun RequestAppDialog(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Quick Presets
-                Text("Quick presets:", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.padding(vertical = 4.dp)
-                ) {
-                    items(presets) { (info, age) ->
+                Text("Quick Presets:", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(4.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(presets) { (preset, age) ->
                         FilterChip(
-                            selected = appName == info.first,
+                            selected = appName == preset.first,
                             onClick = {
-                                appName = info.first
-                                packageName = info.second
-                                category = info.third
+                                appName = preset.first
+                                packageName = preset.second
+                                category = preset.third
                                 minAgeRating = age
                             },
-                            label = { Text(info.first) }
+                            label = { Text(preset.first) }
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 OutlinedTextField(
                     value = appName,
@@ -678,65 +705,15 @@ private fun RequestAppDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    if (appName.isNotBlank() && packageName.isNotBlank()) {
-                        onSubmit(selectedChild, appName, packageName, category, minAgeRating, dailyLimit)
-                    }
-                }
+                    onSubmit(selectedChild, appName, packageName, category, minAgeRating, dailyLimit)
+                },
+                enabled = appName.isNotBlank() && packageName.isNotBlank()
             ) {
                 Text("Submit Request")
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        }
-    )
-}
-
-@Composable
-private fun AppLimitDialog(
-    app: AppAccessInfo,
-    onDismiss: () -> Unit,
-    onSave: (Int) -> Unit
-) {
-    var limit by remember { mutableFloatStateOf(app.dailyLimitMinutes.toFloat()) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Daily Limit for ${app.appName}", fontWeight = FontWeight.Bold) },
-        text = {
-            Column {
-                Text(
-                    text = "Configure maximum daily screen time allowed for this application.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    text = "${limit.toInt()} minutes per day",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Slider(
-                    value = limit,
-                    onValueChange = { limit = it },
-                    valueRange = 15f..240f,
-                    steps = 14
-                )
-            }
-        },
-        confirmButton = {
-            Button(onClick = { onSave(limit.toInt()) }) {
-                Text("Save Limit")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
+            TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
 }
@@ -747,8 +724,8 @@ fun AppManagementScreenPreview() {
     KGuardTheme {
         AppManagementContent(
             managedApps = listOf(
-                AppAccessInfo("1", "Roblox", "com.roblox.client", "Gaming", 10, 68, AppApprovalStatus.PENDING_REVIEW, 30, "Contains unmoderated user chat.", "c1", "Ama"),
-                AppAccessInfo("2", "Duolingo", "com.duolingo", "Education", 4, 95, AppApprovalStatus.APPROVED, 60, "Safe educational app with high safety rating.", "c1", "Ama")
+                AppAccessInfo("1", "Roblox", "com.roblox.client", "Gaming & Community", 10, 68, AppApprovalStatus.PENDING_REVIEW, 30, "Contains unmoderated user chat."),
+                AppAccessInfo("2", "Duolingo", "com.duolingo", "Education", 4, 95, AppApprovalStatus.APPROVED, 60, "Safe educational app with high safety rating.")
             ),
             activeAgeProfile = AgeProfile.PRETEENS_8_12,
             onApprove = {},

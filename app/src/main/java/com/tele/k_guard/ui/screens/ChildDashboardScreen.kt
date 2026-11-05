@@ -18,11 +18,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -40,13 +42,22 @@ import com.tele.k_guard.ui.theme.KGuardTheme
 
 @Composable
 fun ChildDashboardScreen(
-    childProfile: ChildProfile?
+    childProfile: ChildProfile?,
+    onNavigateToProfile: () -> Unit = {}
 ) {
     Scaffold(
         topBar = {
             KGuardTopAppBar(
                 title = "K-Guard Child Protection",
-                canNavigateBack = false
+                canNavigateBack = false,
+                actions = {
+                    IconButton(onClick = onNavigateToProfile) {
+                        Icon(
+                            imageVector = Icons.Default.Person,
+                            contentDescription = "Profile"
+                        )
+                    }
+                }
             )
         }
     ) { innerPadding ->

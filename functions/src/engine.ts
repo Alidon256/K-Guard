@@ -1,3 +1,4 @@
+import { applicationDefault } from "firebase-admin/app";
 import { CATEGORIES, Category, Context, Scores } from "./policy";
 
 export interface Analysis {
@@ -11,7 +12,19 @@ export interface ApiConfig {
   key?: string;
 }
 
-const DEFAULT_KEY = process.env.MODERATION_API_KEY || "AIzaSyCnwCZJc5EVdRBEpCwZE_sZq4Ni-1WJP10";
+/**
+ * Google Cloud Natural Language and Vision are called with the function's own service account
+ * (an OAuth access token from the runtime), so no API key is stored in code, config or the app.
+ * Returns null when no token is available, for example in a local emulator without credentials.
+ */
+async function googleAuthHeaders(): Promise<Record<string, string> | null> {
+  try {
+    const { access_token } = await applicationDefault().getAccessToken();
+    return access_token ? { Authorization: `Bearer ${access_token}`, "Content-Type": "application/json" } : null;
+  } catch {
+    return null;
+  }
+}
 
 function normaliseCategory(raw: string): Category | null {
   const s = raw.toLowerCase();
@@ -63,13 +76,15 @@ async function callApi(cfg: ApiConfig, path: string, init: RequestInit): Promise
 }
 
 /** Google Cloud Natural Language API moderateText for production text moderation. */
-async function callGoogleNaturalLanguage(text: string, key: string): Promise<Scores | null> {
+async function callGoogleNaturalLanguage(text: string): Promise<Scores | null> {
+  const headers = await googleAuthHeaders();
+  if (!headers) return null;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 10000);
   try {
-    const res = await fetch(`https://language.googleapis.com/v1/documents:moderateText?key=${key}`, {
+    const res = await fetch("https://language.googleapis.com/v1/documents:moderateText", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({ document: { type: "PLAIN_TEXT", content: text } }),
       signal: ctrl.signal,
     });
@@ -109,14 +124,16 @@ async function callGoogleNaturalLanguage(text: string, key: string): Promise<Sco
 }
 
 /** Google Cloud Vision API SafeSearchDetection for production image moderation. */
-async function callGoogleVisionSafeSearch(bytes: Buffer, key: string): Promise<Scores | null> {
+async function callGoogleVisionSafeSearch(bytes: Buffer): Promise<Scores | null> {
+  const headers = await googleAuthHeaders();
+  if (!headers) return null;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 12000);
   try {
     const base64Img = bytes.toString("base64");
-    const res = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${key}`, {
+    const res = await fetch("https://vision.googleapis.com/v1/images:annotate", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({
         requests: [
           {
@@ -193,9 +210,8 @@ export async function analyzeText(text: string, ageProfile: string, cfg: ApiConf
   }
 
   // 2. Try Google Cloud Natural Language API (production-grade)
-  const key = cfg.key || DEFAULT_KEY;
-  if (key) {
-    const cloudScores = await callGoogleNaturalLanguage(text, key);
+  {
+    const cloudScores = await callGoogleNaturalLanguage(text);
     if (cloudScores) {
       // Merge with regex patterns for local coverage
       const ruleScores = analyzeTextWithRules(text).scores;
@@ -231,9 +247,8 @@ export async function analyzeImage(
   }
 
   // 2. Try Google Cloud Vision SafeSearch API (production-grade)
-  const key = cfg.key || DEFAULT_KEY;
-  if (key) {
-    const visionScores = await callGoogleVisionSafeSearch(bytes, key);
+  {
+    const visionScores = await callGoogleVisionSafeSearch(bytes);
     if (visionScores) {
       return { scores: visionScores, context: "harmful", source: "ai" };
     }

@@ -57,6 +57,7 @@ import com.tele.k_guard.viewmodel.SessionViewModel
 @Composable
 fun SignInScreen(
     session: SessionViewModel,
+    onParentSignedIn: () -> Unit = {},
     onChildPaired: () -> Unit = {}
 ) {
     val busy by session.busy.collectAsState()
@@ -73,13 +74,15 @@ fun SignInScreen(
         onSignIn = { email, password ->
             Log.d("KGuard", "UI: User clicked Sign In with Email: $email")
             session.signIn(email, password)
+            onParentSignedIn()
         },
         onSignUp = { email, password ->
             Log.d("KGuard", "UI: User clicked Create Account with Email: $email")
             session.signUp(email, password)
+            onParentSignedIn()
         },
-        onParentGoogleSignIn = {
-            Log.d("KGuard", "UI: User clicked Sign In with Google")
+        onParentGoogleSignIn = { isChild ->
+            Log.d("KGuard", "UI: User clicked Sign In with Google (isChild=$isChild)")
             scope.launch {
                 try {
                     val credentialManager = CredentialManager.create(context)
@@ -101,6 +104,11 @@ fun SignInScreen(
                         val firebaseCredential = GoogleAuthProvider.getCredential(googleIdTokenCredential.idToken, null)
                         Log.d("KGuard", "UI: Google credential retrieved successfully, signing in with Firebase...")
                         session.signInWithCredential(firebaseCredential)
+                        if (!isChild) {
+                            onParentSignedIn()
+                        } else {
+                            Log.d("KGuard", "UI: Child signed in with Google, waiting for pairing OTP code entry.")
+                        }
                     } else {
                         Log.e("KGuard", "UI: Unexpected credential type received from Credential Manager")
                     }
@@ -117,6 +125,7 @@ fun SignInScreen(
             Log.d("KGuard", "UI: User clicked Explore Demo Mode")
             DebugPreview.demo = true
             session.enterDemo()
+            onParentSignedIn()
         }
     )
 }
@@ -128,7 +137,7 @@ fun SignInContent(
     showDemoButton: Boolean = true,
     onSignIn: (String, String) -> Unit = { _, _ -> },
     onSignUp: (String, String) -> Unit = { _, _ -> },
-    onParentGoogleSignIn: () -> Unit = {},
+    onParentGoogleSignIn: (Boolean) -> Unit = {},
     onRedeemOtp: (String) -> Unit = {},
     onDemoClick: () -> Unit = {}
 ) {
@@ -219,7 +228,7 @@ fun SignInContent(
                 HorizontalDivider()
                 Spacer(Modifier.height(12.dp))
                 OutlinedButton(
-                    onClick = onParentGoogleSignIn,
+                    onClick = { onParentGoogleSignIn(false) },
                     modifier = Modifier.fillMaxWidth().height(48.dp),
                     shape = RoundedCornerShape(12.dp)
                 ) {
@@ -233,7 +242,7 @@ fun SignInContent(
                 )
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(
-                    onClick = onParentGoogleSignIn,
+                    onClick = { onParentGoogleSignIn(true) },
                     modifier = Modifier.fillMaxWidth().height(48.dp),
                     shape = RoundedCornerShape(12.dp)
                 ) {
