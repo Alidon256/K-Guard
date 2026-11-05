@@ -3,7 +3,7 @@ import { FieldValue, getFirestore, Timestamp } from "firebase-admin/firestore";
 import { getMessaging } from "firebase-admin/messaging";
 import { getStorage } from "firebase-admin/storage";
 import { onCall, HttpsError, CallableRequest } from "firebase-functions/v2/https";
-import { onDocumentCreated } from "firebase-functions/v2/firestore";
+import { onDocumentCreated, onDocumentWritten } from "firebase-functions/v2/firestore";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { randomInt } from "node:crypto";
 
@@ -60,24 +60,28 @@ export const createFamily = onCall(async (req) => {
   return { familyId: famRef.id, role: "parent" };
 });
 
-// ---------------------------------------------------------------- pairing
+// ---------------------------------------------------------------- pairing & OTP
 export const createPairingCode = onCall(async (req) => {
   const uid = requireAuth(req);
   const user = await userDoc(uid);
   if (user.role !== "parent" || !user.familyId) throw new HttpsError("permission-denied", "Parents only.");
   const childId = String(req.data?.childId ?? "");
-  const child = await db.doc(`families/${user.familyId}/children/${childId}`).get();
-  if (!child.exists) throw new HttpsError("not-found", "Child profile not found.");
+  const childDoc = await db.doc(`families/${user.familyId}/children/${childId}`).get();
+  if (!childDoc.exists) throw new HttpsError("not-found", "Child profile not found.");
+  const childData = childDoc.data() ?? {};
 
   const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
   await db.doc(`pairingCodes/${code}`).set({
     familyId: user.familyId,
     childId,
+    childEmail: childData.email ?? req.data?.email ?? null,
     createdBy: uid,
     expiresAt: Timestamp.fromMillis(Date.now() + 15 * 60 * 1000),
   });
   return { code, expiresInMinutes: 15 };
 });
+
+export const sendChildOtp = createPairingCode;
 
 export const redeemPairingCode = onCall(async (req) => {
   const uid = requireAuth(req);
@@ -104,6 +108,7 @@ export const redeemPairingCode = onCall(async (req) => {
   });
   return { familyId: data.familyId, childId: data.childId };
 });
+
 
 // ---------------------------------------------------------------- moderateContent
 export const moderateContent = onCall({ timeoutSeconds: 60, memory: "512MiB" }, async (req) => {
@@ -245,6 +250,226 @@ export const reportWebBlock = onCall(async (req) => {
     createdAt: FieldValue.serverTimestamp(),
   });
   return { ok: true };
+});
+
+// ---------------------------------------------------------------- app approvals
+export const requestAppApproval = onCall(async (req) => {
+  const uid = requireAuth(req);
+  const user = await userDoc(uid);
+  if (!user.familyId) throw new HttpsError("failed-precondition", "No family found.");
+
+  const familyId = user.familyId;
+  const childId = user.role === "child" ? user.childId : String(req.data?.childId ?? "");
+  if (!childId) throw new HttpsError("invalid-argument", "childId is required.");
+
+  const [famSnap, childSnap] = await Promise.all([
+    db.doc(`families/${familyId}`).get(),
+    db.doc(`families/${familyId}/children/${childId}`).get(),
+  ]);
+  const family = famSnap.data() as any;
+  const child = childSnap.data() as any;
+  if (!family || !child) throw new HttpsError("not-found", "Child profile not found.");
+
+  const appName = String(req.data?.appName ?? "").trim().slice(0, 100);
+  const packageName = String(req.data?.packageName ?? "").trim().toLowerCase().slice(0, 150);
+  if (!appName || !packageName) throw new HttpsError("invalid-argument", "appName and packageName are required.");
+
+  const category = String(req.data?.category ?? "General").trim().slice(0, 50);
+  const minAgeRating = Number(req.data?.minAgeRating ?? 3);
+  const dailyLimitMinutes = Number(req.data?.dailyLimitMinutes ?? 30);
+
+  // Compute suitability assessment based on child's age profile
+  const maxAgeMap: Record<string, number> = {
+    KIDS_3_7: 7,
+    PRETEENS_8_12: 12,
+    TEENS_13_17: 17,
+    ADULTS_18_PLUS: 99,
+  };
+  const childMaxAge = maxAgeMap[child.ageProfile] ?? 7;
+  let safetyScore: number;
+  let safetyReason: string;
+
+  if (minAgeRating > childMaxAge) {
+    safetyScore = Math.max(25, 100 - (minAgeRating - childMaxAge) * 18);
+    safetyReason = `Age rating (${minAgeRating}+) exceeds recommended age bracket for ${child.name} (${String(child.ageProfile).replace(/_/g, " ")}). Requires parental approval.`;
+  } else {
+    safetyScore = Math.min(98, 85 + (minAgeRating % 10));
+    safetyReason = `Age rating (${minAgeRating}+) is within the recommended bracket for ${child.name}. Requires parental sign-off before installation.`;
+  }
+
+  const appId = `${childId}_${packageName.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+  const appRef = db.doc(`families/${familyId}/apps/${appId}`);
+  const existingSnap = await appRef.get();
+  const existing = existingSnap.data() as any;
+
+  if (existing && existing.approvalStatus === "APPROVED") {
+    return {
+      appId,
+      approvalStatus: "APPROVED",
+      message: `${appName} is already approved for ${child.name}.`,
+      appName,
+      packageName,
+    };
+  }
+
+  const payload = {
+    id: appId,
+    childId,
+    childName: child.name,
+    childLinkedUid: child.linkedUid ?? (user.role === "child" ? uid : null),
+    appName,
+    packageName,
+    category,
+    minAgeRating,
+    safetyScore,
+    safetyReason,
+    approvalStatus: "PENDING_REVIEW",
+    dailyLimitMinutes: existing?.dailyLimitMinutes ?? dailyLimitMinutes,
+    requestedAt: FieldValue.serverTimestamp(),
+    reviewedAt: null,
+    reviewedBy: null,
+    notified: false,
+  };
+
+  await appRef.set(payload, { merge: true });
+
+  return {
+    appId,
+    approvalStatus: "PENDING_REVIEW",
+    message: `Approval requested for ${appName}. Your parent will be notified.`,
+    safetyScore,
+    safetyReason,
+  };
+});
+
+export const respondToAppApproval = onCall(async (req) => {
+  const uid = requireAuth(req);
+  const user = await userDoc(uid);
+  if (user.role !== "parent" || !user.familyId) {
+    throw new HttpsError("permission-denied", "Parents only.");
+  }
+  const familyId = user.familyId;
+  const appId = String(req.data?.appId ?? "").trim();
+  const decision = String(req.data?.decision ?? "").toUpperCase();
+  if (decision !== "APPROVED" && decision !== "REJECTED") {
+    throw new HttpsError("invalid-argument", "decision must be APPROVED or REJECTED.");
+  }
+  const dailyLimitMinutes = req.data?.dailyLimitMinutes !== undefined ? Number(req.data.dailyLimitMinutes) : undefined;
+
+  const appRef = db.doc(`families/${familyId}/apps/${appId}`);
+  const snap = await appRef.get();
+  if (!snap.exists) throw new HttpsError("not-found", "App request not found.");
+  const appData = snap.data() as any;
+
+  const updateData: Record<string, any> = {
+    approvalStatus: decision,
+    reviewedAt: FieldValue.serverTimestamp(),
+    reviewedBy: uid,
+  };
+  if (dailyLimitMinutes !== undefined && !Number.isNaN(dailyLimitMinutes)) {
+    updateData.dailyLimitMinutes = dailyLimitMinutes;
+  }
+
+  await appRef.update(updateData);
+
+  // Send push notification to the child device if linked
+  if (appData.childLinkedUid) {
+    const childUser = await userDoc(appData.childLinkedUid);
+    const tokens: string[] = childUser.fcmTokens ?? [];
+    if (tokens.length > 0) {
+      const isApproved = decision === "APPROVED";
+      await getMessaging().sendEachForMulticast({
+        tokens,
+        notification: {
+          title: isApproved ? `App Approved: ${appData.appName}` : `App Request Declined`,
+          body: isApproved
+            ? `Your parent approved ${appData.appName}. You can now install and use it!`
+            : `Your request to install ${appData.appName} was not approved.`,
+        },
+        data: {
+          familyId,
+          appId,
+          packageName: appData.packageName,
+          decision,
+          type: "app_approval_response",
+        },
+        android: { priority: "high", notification: { channelId: "safety_alerts" } },
+      }).catch(() => undefined);
+    }
+  }
+
+  return { ok: true, appId, status: decision };
+});
+
+export const onAppApprovalWritten = onDocumentWritten("families/{familyId}/apps/{appId}", async (event) => {
+  const after = event.data?.after?.data();
+  const before = event.data?.before?.data();
+  if (!after) return;
+
+  const { familyId, appId } = event.params;
+
+  const isNewPending = after.approvalStatus === "PENDING_REVIEW" && (!before || before.approvalStatus !== "PENDING_REVIEW");
+  if (!isNewPending) return;
+
+  const famDoc = await db.doc(`families/${familyId}`).get();
+  const fam = famDoc.data() as any;
+  if (!fam) return;
+
+  const tokens: string[] = [];
+  const owners: Record<string, string[]> = {};
+  for (const pid of (fam.parentUids as string[] ?? [])) {
+    const u = (await db.doc(`users/${pid}`).get()).data() as any;
+    for (const t of u?.fcmTokens ?? []) {
+      tokens.push(t);
+      (owners[pid] ??= []).push(t);
+    }
+  }
+  if (tokens.length === 0) return;
+
+  const childName = after.childName || "Your child";
+  const appName = after.appName || "an application";
+  const category = after.category || "App";
+  const minAge = after.minAgeRating || 0;
+
+  const title = `App Install Request: ${appName}`;
+  const body = `${childName} wants to install ${appName} (${category} • Age ${minAge}+). Tap to review.`;
+
+  const res = await getMessaging().sendEachForMulticast({
+    tokens,
+    notification: { title, body },
+    data: {
+      familyId,
+      appId,
+      childId: after.childId || "",
+      childName,
+      appName,
+      packageName: after.packageName || "",
+      type: "app_approval",
+      status: "PENDING_REVIEW",
+    },
+    android: {
+      priority: "high",
+      notification: {
+        channelId: "safety_alerts",
+      },
+    },
+  });
+
+  const dead = new Set<string>();
+  res.responses.forEach((r, i) => {
+    const code = r.error?.code;
+    if (code === "messaging/registration-token-not-registered" || code === "messaging/invalid-registration-token") {
+      dead.add(tokens[i]);
+    }
+  });
+  if (dead.size) {
+    for (const [pid, list] of Object.entries(owners)) {
+      const bad = list.filter((t) => dead.has(t));
+      if (bad.length) await db.doc(`users/${pid}`).update({ fcmTokens: FieldValue.arrayRemove(...bad) });
+    }
+  }
+
+  await event.data?.after?.ref.update({ notified: res.successCount > 0 });
 });
 
 function sanitiseRules(raw: unknown): Partial<Record<Category, Rule>> {

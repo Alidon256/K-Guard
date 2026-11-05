@@ -21,7 +21,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
-/** Receives safety-alert pushes for parents and keeps the device's FCM token registered. */
+/** Receives safety-alert & app-approval pushes for parents and keeps the device's FCM token registered. */
 class KGuardMessagingService : FirebaseMessagingService() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -31,9 +31,15 @@ class KGuardMessagingService : FirebaseMessagingService() {
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
-        val title = message.notification?.title ?: "K-Guard safety alert"
-        val body = message.notification?.body ?: return
-        showAlert(this, title, body)
+        val title = message.notification?.title ?: message.data["title"] ?: "K-Guard alert"
+        val body = message.notification?.body ?: message.data["body"] ?: return
+        val type = message.data["type"]
+        val destinationRoute = if (type == "app_approval" || type == "app_approval_response") {
+            "app_management"
+        } else {
+            "review_queue"
+        }
+        showAlert(this, title, body, destinationRoute)
     }
 
     companion object {
@@ -42,19 +48,25 @@ class KGuardMessagingService : FirebaseMessagingService() {
         fun ensureChannel(context: Context) {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
             val channel = NotificationChannel(
-                CHANNEL_ID, "Safety alerts", NotificationManager.IMPORTANCE_HIGH
-            ).apply { description = "Alerts when K-Guard flags content for one of your children." }
+                CHANNEL_ID, "Safety & Approval Alerts", NotificationManager.IMPORTANCE_HIGH
+            ).apply { description = "Alerts when K-Guard flags content or receives child app install requests." }
             context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
 
-        fun showAlert(context: Context, title: String, body: String) {
+        fun showAlert(context: Context, title: String, body: String, destinationRoute: String? = null) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                 ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED
             ) return
             ensureChannel(context)
+            val intent = Intent(context, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                if (destinationRoute != null) {
+                    putExtra("navigate_to", destinationRoute)
+                }
+            }
             val open = PendingIntent.getActivity(
-                context, 0, Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                context, System.currentTimeMillis().toInt(), intent,
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
             )
             val n = NotificationCompat.Builder(context, CHANNEL_ID)

@@ -1,5 +1,6 @@
 package com.tele.k_guard.data.repository
 
+import com.google.firebase.auth.AuthCredential
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.firestore.FieldValue
@@ -40,6 +41,10 @@ object FamilyRepository {
         auth.createUserWithEmailAndPassword(email.trim(), password).await()
     }
 
+    suspend fun signInWithCredential(credential: AuthCredential) {
+        auth.signInWithCredential(credential).await()
+    }
+
     fun signOut() = auth.signOut()
 
     /** Creates the family on first sign-in (server side) and returns its id. */
@@ -67,6 +72,7 @@ object FamilyRepository {
         val col = db.collection("families/$familyId/children")
         val data = hashMapOf<String, Any?>(
             "name" to child.name.trim(),
+            "email" to child.email.trim(),
             "ageProfile" to child.ageProfile,
             "categoryRules" to child.categoryRules,
             "allowReveal" to child.allowReveal
@@ -88,6 +94,12 @@ object FamilyRepository {
         val res = functions.getHttpsCallable("createPairingCode").call(mapOf("childId" to childId)).await()
         @Suppress("UNCHECKED_CAST")
         return (res.data as Map<String, Any?>)["code"] as String
+    }
+
+    suspend fun redeemPairingCode(code: String): Map<String, Any?> {
+        val res = functions.getHttpsCallable("redeemPairingCode").call(mapOf("code" to code)).await()
+        @Suppress("UNCHECKED_CAST")
+        return res.data as Map<String, Any?>
     }
 
     // ---------- events ----------

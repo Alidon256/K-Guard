@@ -35,6 +35,7 @@ enum class CategoryRule(val id: String, val label: String) {
 data class ChildProfile(
     val id: String = "",
     val name: String = "",
+    val email: String = "",
     val ageProfile: String = AgeProfile.PRETEENS_8_12.id,
     val categoryRules: Map<String, String> = emptyMap(),
     val allowReveal: Boolean = false,

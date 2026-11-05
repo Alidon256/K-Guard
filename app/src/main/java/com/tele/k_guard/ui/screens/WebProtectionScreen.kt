@@ -165,7 +165,7 @@ private fun StatusTab(session: SessionViewModel, store: VpnConfigStore) {
         Text("Check a site", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Text("See what K-Guard would do for this profile, and why.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(site, { site = it; checked = null }, label = { Text("example.com") }, singleLine = true, modifier = Modifier.weight(1f))
+            OutlinedTextField(site, { site = it; checked = null }, label = { Text("example.com") }, singleLine = true, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp))
             Button(
                 enabled = site.isNotBlank() && child != null && filter != null,
                 onClick = {

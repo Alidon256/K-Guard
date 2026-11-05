@@ -2,6 +2,7 @@ package com.tele.k_guard.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.google.firebase.auth.AuthCredential
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.Timestamp
 import com.tele.k_guard.DebugPreview
@@ -22,7 +23,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-/** Holds the signed-in parent, their family, children, safety events and privacy settings. */
+/** Holds the signed-in parent/child, their family, children, safety events and privacy settings. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SessionViewModel : ViewModel() {
 
@@ -31,8 +32,8 @@ class SessionViewModel : ViewModel() {
     // ---- debug-only demo data (see DebugPreview); never used when demo is false ----
     private val demoChildren = MutableStateFlow(
         listOf(
-            ChildProfile("c1", "Ama", "PRETEENS_8_12", mapOf("profanity" to "block"), false, null, Timestamp.now()),
-            ChildProfile("c2", "Kofi", "TEENS_13_17", mapOf("violence" to "warn", "drugs" to "block"), true, null, Timestamp.now())
+            ChildProfile("c1", "Ama", "ama@example.com", "PRETEENS_8_12", mapOf("profanity" to "block"), false, null, Timestamp.now()),
+            ChildProfile("c2", "Kofi", "kofi@example.com", "TEENS_13_17", mapOf("violence" to "warn", "drugs" to "block"), true, null, Timestamp.now())
         )
     )
     private val demoEvents = MutableStateFlow(
@@ -53,7 +54,7 @@ class SessionViewModel : ViewModel() {
     private val _user = MutableStateFlow(repo.currentUser)
     val user: StateFlow<FirebaseUser?> = _user.asStateFlow()
 
-    /** True when a parent is signed in, or the debug demo is active. */
+    /** True when signed in, or the debug demo is active. */
     val signedIn: StateFlow<Boolean> = combine(_user, _demo) { u, d -> u != null || d }
         .stateIn(viewModelScope, SharingStarted.Eagerly, DebugPreview.demo || repo.currentUser != null)
 
@@ -126,6 +127,7 @@ class SessionViewModel : ViewModel() {
 
     fun signIn(email: String, password: String) = launchBusy { repo.signIn(email, password) }
     fun signUp(email: String, password: String) = launchBusy { repo.signUp(email, password) }
+    fun signInWithCredential(credential: AuthCredential) = launchBusy { repo.signInWithCredential(credential) }
     fun signOut() = repo.signOut()
 
     fun saveChild(child: ChildProfile, onDone: () -> Unit = {}) = launchBusy {
@@ -149,6 +151,16 @@ class SessionViewModel : ViewModel() {
     }
 
     fun createPairingCode(childId: String) = launchBusy { _pairingCode.value = repo.createPairingCode(childId) }
+    fun sendChildOtp(childId: String) = createPairingCode(childId)
+
+    fun redeemPairingCode(code: String, onDone: () -> Unit = {}) = launchBusy {
+        val res = repo.redeemPairingCode(code)
+        val fid = res["familyId"] as? String
+        val cid = res["childId"] as? String
+        if (fid != null) _familyId.value = fid
+        if (cid != null) _selectedChildId.value = cid
+        onDone()
+    }
 
     fun review(eventId: String, action: ParentAction, note: String) = launchBusy {
         if (_familyId.value == "demo") {

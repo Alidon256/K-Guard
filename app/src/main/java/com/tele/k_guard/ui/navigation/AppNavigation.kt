@@ -17,6 +17,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.tele.k_guard.data.model.AppApprovalStatus
 import com.tele.k_guard.data.repository.UserPreferencesRepository
 import com.tele.k_guard.ui.screens.AgeProfileScreen
 import com.tele.k_guard.ui.screens.AppManagementScreen
@@ -41,7 +42,8 @@ import com.tele.k_guard.viewmodel.TextModerationViewModel
 
 @Composable
 fun AppNavigation(
-    navController: NavHostController = rememberNavController()
+    navController: NavHostController = rememberNavController(),
+    targetRoute: String? = null
 ) {
     val context = LocalContext.current.applicationContext
     val userPreferencesRepository = UserPreferencesRepository(context)
@@ -56,6 +58,8 @@ fun AppNavigation(
     val authChecked by session.authChecked.collectAsState()
     val selectedChild by session.selectedChild.collectAsState()
     val openAlerts by session.openAlertCount.collectAsState()
+    val familyId by session.familyId.collectAsState()
+    val children by session.children.collectAsState()
 
     // The selected child's age group drives every check; before any child exists, fall back to the device setting.
     val activeAgeProfile = selectedChild?.age ?: devicePreferredProfile
@@ -66,12 +70,29 @@ fun AppNavigation(
     val screenTimeViewModel: ScreenTimeViewModel = viewModel()
     val appManagementViewModel: AppManagementViewModel = viewModel()
 
+    LaunchedEffect(familyId, activeChildId) {
+        appManagementViewModel.setFamilyAndChild(familyId, activeChildId)
+    }
+
+    val managedApps by appManagementViewModel.managedApps.collectAsState()
+    val pendingApprovalsCount = managedApps.count { it.approvalStatus == AppApprovalStatus.PENDING_REVIEW }
+
     // Signing out (or an expired session) returns to the sign-in screen from anywhere.
     LaunchedEffect(signedIn, authChecked) {
         if (authChecked && !signedIn) {
             val current = navController.currentDestination?.route
             if (current != null && current != Screen.SignIn.route && current != Screen.Onboarding.route) {
                 navController.navigate(Screen.SignIn.route) { popUpTo(0) }
+            }
+        }
+    }
+
+    // Handle deep navigation from FCM push notifications
+    LaunchedEffect(targetRoute, signedIn) {
+        if (signedIn && targetRoute != null) {
+            when (targetRoute) {
+                "app_management" -> navController.navigate(Screen.AppManagement.route)
+                "review_queue" -> navController.navigate(Screen.ReviewQueue.route)
             }
         }
     }
@@ -113,6 +134,7 @@ fun AppNavigation(
                 activeAgeProfile = activeAgeProfile,
                 activeChildName = selectedChild?.name,
                 openAlertCount = openAlerts,
+                pendingApprovalCount = pendingApprovalsCount,
                 onNavigateToTextModeration = { navController.navigate(Screen.TextModeration.route) },
                 onNavigateToImageModeration = { navController.navigate(Screen.ImageModeration.route) },
                 onNavigateToAgeProfile = { navController.navigate(Screen.Children.route) },
@@ -173,6 +195,9 @@ fun AppNavigation(
             AppManagementScreen(
                 viewModel = appManagementViewModel,
                 activeAgeProfile = activeAgeProfile,
+                activeChild = selectedChild,
+                children = children,
+                familyId = familyId,
                 onNavigateBack = { navController.popBackStack() }
             )
         }

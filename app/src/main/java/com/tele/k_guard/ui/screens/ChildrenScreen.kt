@@ -16,16 +16,17 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -47,6 +48,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.tele.k_guard.data.model.AgeProfile
@@ -98,12 +100,6 @@ fun ChildrenContent(
         }
     ) { padding ->
         when {
-            familyId == null -> Column(
-                Modifier.fillMaxSize().padding(padding),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) { CircularProgressIndicator() }
-
             children.isEmpty() -> Column(
                 Modifier.fillMaxSize().padding(padding).padding(24.dp),
                 verticalArrangement = Arrangement.Center,
@@ -141,7 +137,7 @@ fun ChildrenContent(
                                 Text(child.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                                 Text(
                                     "${child.age.title} · ${child.age.ageRange}" +
-                                        if (child.categoryRules.isNotEmpty()) " · ${child.categoryRules.size} custom rule(s)" else "",
+                                        if (child.email.isNotBlank()) " · ${child.email}" else "",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -164,7 +160,7 @@ fun ChildrenContent(
     }
 }
 
-/** Create or edit a child: name, age group, per-category rules and reveal permission. */
+/** Create or edit a child: name, email, age group, per-category rules and reveal permission. */
 @Composable
 fun ChildEditorScreen(
     session: SessionViewModel,
@@ -174,12 +170,16 @@ fun ChildEditorScreen(
     val children by session.children.collectAsState()
     val busy by session.busy.collectAsState()
     val error by session.error.collectAsState()
+    val pairingCode by session.pairingCode.collectAsState()
     val existing = children.find { it.id == childId }
 
     ChildEditorContent(
         existing = existing,
         busy = busy,
         error = error,
+        pairingCode = pairingCode,
+        onGenerateCode = { id -> session.createPairingCode(id) },
+        onClearCode = { session.clearPairingCode() },
         onSaveChild = { updatedChild ->
             session.saveChild(updatedChild, onDone = onNavigateBack)
         },
@@ -195,11 +195,15 @@ fun ChildEditorContent(
     existing: ChildProfile?,
     busy: Boolean,
     error: String?,
+    pairingCode: String? = null,
+    onGenerateCode: (String) -> Unit = {},
+    onClearCode: () -> Unit = {},
     onSaveChild: (ChildProfile) -> Unit,
     onDeleteChild: (String) -> Unit,
     onNavigateBack: () -> Unit
 ) {
     var name by remember(existing?.id) { mutableStateOf(existing?.name ?: "") }
+    var email by remember(existing?.id) { mutableStateOf(existing?.email ?: "") }
     var ageId by remember(existing?.id) { mutableStateOf(existing?.ageProfile ?: AgeProfile.PRETEENS_8_12.id) }
     var rules by remember(existing?.id) { mutableStateOf(existing?.categoryRules ?: emptyMap()) }
     var allowReveal by remember(existing?.id) { mutableStateOf(existing?.allowReveal ?: false) }
@@ -219,8 +223,31 @@ fun ChildEditorContent(
         ) {
             OutlinedTextField(
                 value = name, onValueChange = { name = it.take(40) }, label = { Text("Child's name") },
-                singleLine = true, modifier = Modifier.fillMaxWidth()
+                singleLine = true, modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
             )
+
+            Spacer(Modifier.height(12.dp))
+
+            OutlinedTextField(
+                value = email, onValueChange = { email = it.trim() }, label = { Text("Child's Google Email") },
+                singleLine = true, modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                shape = RoundedCornerShape(12.dp)
+            )
+
+            if (existing != null) {
+                Spacer(Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = { onGenerateCode(existing.id) },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.QrCode, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Generate Device Pairing OTP Code")
+                }
+            }
 
             Spacer(Modifier.height(16.dp))
             Text("Age group", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -301,7 +328,7 @@ fun ChildEditorContent(
                 onClick = {
                     onSaveChild(
                         (existing ?: ChildProfile()).copy(
-                            name = name, ageProfile = ageId, categoryRules = rules,
+                            name = name, email = email, ageProfile = ageId, categoryRules = rules,
                             allowReveal = allowReveal && (age == AgeProfile.TEENS_13_17 || age == AgeProfile.ADULTS_18_PLUS)
                         )
                     )
@@ -317,6 +344,23 @@ fun ChildEditorContent(
             }
             Spacer(Modifier.height(24.dp))
         }
+    }
+
+    pairingCode?.let { code ->
+        AlertDialog(
+            onDismissRequest = onClearCode,
+            title = { Text("6-Digit Device Pairing OTP") },
+            text = {
+                Column {
+                    Text("Enter this code on your child's phone during setup to pair their device:")
+                    Spacer(Modifier.height(12.dp))
+                    Text(code, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.height(4.dp))
+                    Text("This code expires in 15 minutes.", style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = { TextButton(onClick = onClearCode) { Text("Done") } }
+        )
     }
 
     if (confirmDelete && existing != null) {
@@ -335,7 +379,7 @@ fun ChildEditorContent(
 @Preview(showBackground = true)
 @Composable
 fun ChildrenScreenPreview() {
-    val child = ChildProfile(id = "1", name = "Alex", ageProfile = AgeProfile.PRETEENS_8_12.id)
+    val child = ChildProfile(id = "1", name = "Alex", email = "alex@example.com", ageProfile = AgeProfile.PRETEENS_8_12.id)
     KGuardTheme {
         ChildrenContent(
             children = listOf(child),
@@ -351,7 +395,7 @@ fun ChildrenScreenPreview() {
 @Preview(showBackground = true)
 @Composable
 fun ChildEditorScreenPreview() {
-    val child = ChildProfile(id = "1", name = "Alex", ageProfile = AgeProfile.PRETEENS_8_12.id)
+    val child = ChildProfile(id = "1", name = "Alex", email = "alex@example.com", ageProfile = AgeProfile.PRETEENS_8_12.id)
     KGuardTheme {
         ChildEditorContent(
             existing = child,

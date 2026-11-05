@@ -117,7 +117,12 @@ fun ReviewQueueContent(
             text = {
                 Column {
                     Text("Add an optional note for your records (visible only to parents).")
-                    OutlinedTextField(note, { note = it.take(300) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+                    OutlinedTextField(
+                        value = note,
+                        onValueChange = { note = it.take(300) },
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        shape = RoundedCornerShape(12.dp)
+                    )
                 }
             },
             confirmButton = { TextButton(onClick = { onReview(ev.id, action, note); pending = null }) { Text("Confirm") } },

@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
@@ -108,8 +109,8 @@ fun PrivacyContent(
             }
             if (quiet) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
-                    OutlinedTextField(qStart, { qStart = it.take(5) }, label = { Text("From (HH:mm)") }, singleLine = true, modifier = Modifier.weight(1f), isError = !TIME.matches(qStart))
-                    OutlinedTextField(qEnd, { qEnd = it.take(5) }, label = { Text("Until (HH:mm)") }, singleLine = true, modifier = Modifier.weight(1f), isError = !TIME.matches(qEnd))
+                    OutlinedTextField(qStart, { qStart = it.take(5) }, label = { Text("From (HH:mm)") }, singleLine = true, modifier = Modifier.weight(1f), isError = !TIME.matches(qStart), shape = RoundedCornerShape(12.dp))
+                    OutlinedTextField(qEnd, { qEnd = it.take(5) }, label = { Text("Until (HH:mm)") }, singleLine = true, modifier = Modifier.weight(1f), isError = !TIME.matches(qEnd), shape = RoundedCornerShape(12.dp))
                 }
             }
 

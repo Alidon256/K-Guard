@@ -51,7 +51,15 @@ service cloud.firestore {
       }
 
       match /apps/{appId} {
-        allow read, write: if isParent(familyId);
+        // Parents can read all apps; linked children can read apps assigned to their profile
+        allow read: if isParent(familyId)
+                    || (signedIn() && resource.data.childLinkedUid == request.auth.uid);
+        // Parents can approve/reject, configure limits, and manage apps
+        allow write: if isParent(familyId);
+        // Children linked to this family can create an install approval request in PENDING_REVIEW status
+        allow create: if signedIn()
+                      && request.resource.data.childLinkedUid == request.auth.uid
+                      && request.resource.data.approvalStatus == 'PENDING_REVIEW';
       }
       match /screenTime/{childId} {
         allow read: if isParent(familyId);

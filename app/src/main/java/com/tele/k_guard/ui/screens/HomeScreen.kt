@@ -56,6 +56,7 @@ fun HomeScreen(
     onNavigateToFlaggedContent: () -> Unit,
     activeChildName: String? = null,
     openAlertCount: Int = 0,
+    pendingApprovalCount: Int = 0,
     onNavigateToPrivacy: () -> Unit = {},
     onNavigateToWebProtection: () -> Unit = {}
 ) {
@@ -143,6 +144,7 @@ fun HomeScreen(
                 description = "Review app requests, safety scores, and app-specific limits.",
                 icon = Icons.Default.Apps,
                 badgeColor = Color(0xFF8E24AA),
+                pendingCount = pendingApprovalCount,
                 onClick = onNavigateToAppManagement
             )
 
@@ -178,27 +180,30 @@ fun HomeScreen(
                 onClick = onNavigateToImageModeration
             )
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
+            PillarHeader(pillar = "PARENT OVERSIGHT", title = "Alerts & Privacy")
+            Spacer(modifier = Modifier.height(8.dp))
             DashboardToolCard(
-                title = if (openAlertCount > 0) "Alerts & Review ($openAlertCount open)" else "Alerts & Review",
-                description = "Review flagged items, then allow, keep blocked or dismiss.",
+                title = "Alerts & Parent Review",
+                description = if (openAlertCount > 0) "$openAlertCount event(s) waiting for your review." else "Audit flagged content and record allow/keep-blocked actions.",
                 icon = Icons.Default.NotificationsActive,
-                badgeColor = Color(0xFFD81B60),
+                badgeColor = if (openAlertCount > 0) Color(0xFFC62828) else Color(0xFF5E35B1),
+                pendingCount = openAlertCount,
                 onClick = onNavigateToFlaggedContent
             )
 
             Spacer(modifier = Modifier.height(8.dp))
 
             DashboardToolCard(
-                title = "Privacy & Notifications",
-                description = "Choose which alerts reach you, quiet hours and what K-Guard keeps.",
+                title = "Privacy & Notification Settings",
+                description = "Choose which alerts notify you, quiet hours, and data retention.",
                 icon = Icons.Default.Lock,
-                badgeColor = Color(0xFF546E7A),
+                badgeColor = Color(0xFF37474F),
                 onClick = onNavigateToPrivacy
             )
 
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -208,14 +213,14 @@ fun HomeScreen(
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Row(
-                    modifier = Modifier.padding(16.dp),
+                    modifier = Modifier.padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
                         imageVector = Icons.Default.Shield,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier.size(24.dp)
                     )
                     Spacer(modifier = Modifier.width(12.dp))
                     Text(
@@ -260,6 +265,7 @@ private fun DashboardToolCard(
     description: String,
     icon: ImageVector,
     badgeColor: Color,
+    pendingCount: Int = 0,
     onClick: () -> Unit
 ) {
     Card(
@@ -270,7 +276,9 @@ private fun DashboardToolCard(
         shape = RoundedCornerShape(16.dp)
     ) {
         Row(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
@@ -284,16 +292,36 @@ private fun DashboardToolCard(
                     imageVector = icon,
                     contentDescription = null,
                     tint = badgeColor,
-                    modifier = Modifier.size(26.dp)
+                    modifier = Modifier.size(24.dp)
                 )
             }
-            Spacer(modifier = Modifier.width(14.dp))
+
+            Spacer(modifier = Modifier.width(16.dp))
+
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    if (pendingCount > 0) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFFE65100))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = "$pendingCount",
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = description,
@@ -301,6 +329,7 @@ private fun DashboardToolCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+
             Icon(
                 imageVector = Icons.Default.ChevronRight,
                 contentDescription = null,
@@ -316,17 +345,15 @@ fun HomeScreenPreview() {
     KGuardTheme {
         HomeScreen(
             activeAgeProfile = AgeProfile.PRETEENS_8_12,
-            activeChildName = "Alex",
+            activeChildName = "Ama",
             openAlertCount = 2,
+            pendingApprovalCount = 1,
             onNavigateToTextModeration = {},
             onNavigateToImageModeration = {},
             onNavigateToAgeProfile = {},
             onNavigateToScreenTime = {},
             onNavigateToAppManagement = {},
-            onNavigateToFlaggedContent = {},
-            onNavigateToPrivacy = {},
-            onNavigateToWebProtection = {}
+            onNavigateToFlaggedContent = {}
         )
     }
 }
-
