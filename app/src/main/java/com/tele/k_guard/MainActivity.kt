@@ -15,6 +15,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        DebugPreview.init(this, intent.getStringExtra("demo_route"), intent.getIntExtra("demo_tab", 0))
         com.tele.k_guard.service.KGuardMessagingService.ensureChannel(this)
         setContent {
             KGuardTheme {

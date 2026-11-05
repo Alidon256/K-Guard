@@ -35,12 +35,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.tele.k_guard.data.model.AgeProfile
 import com.tele.k_guard.data.model.ModerationUiState
 import com.tele.k_guard.ui.components.KGuardTopAppBar
 import com.tele.k_guard.ui.components.ModerationResultCard
+import com.tele.k_guard.ui.theme.KGuardTheme
 import com.tele.k_guard.viewmodel.ImageModerationViewModel
 
 @Composable
@@ -60,6 +62,27 @@ fun ImageModerationScreen(
         viewModel.setSelectedImage(uri)
     }
 
+    ImageModerationContent(
+        selectedImageUri = selectedImageUri,
+        uiState = uiState,
+        activeAgeProfile = activeAgeProfile,
+        onPickImage = { imagePickerLauncher.launch("image/*") },
+        onSubmit = { viewModel.submitImageForModeration(context, activeChildId) },
+        onReset = { viewModel.resetState() },
+        onNavigateBack = onNavigateBack
+    )
+}
+
+@Composable
+fun ImageModerationContent(
+    selectedImageUri: Uri?,
+    uiState: ModerationUiState,
+    activeAgeProfile: AgeProfile,
+    onPickImage: () -> Unit,
+    onSubmit: () -> Unit,
+    onReset: () -> Unit,
+    onNavigateBack: () -> Unit
+) {
     Scaffold(
         topBar = {
             KGuardTopAppBar(
@@ -101,7 +124,7 @@ fun ImageModerationScreen(
                         color = MaterialTheme.colorScheme.outline,
                         shape = RoundedCornerShape(16.dp)
                     )
-                    .clickable { imagePickerLauncher.launch("image/*") },
+                    .clickable { onPickImage() },
                 contentAlignment = Alignment.Center
             ) {
                 if (selectedImageUri != null) {
@@ -132,7 +155,7 @@ fun ImageModerationScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             Button(
-                onClick = { viewModel.submitImageForModeration(context, activeChildId) },
+                onClick = onSubmit,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(48.dp),
@@ -183,7 +206,7 @@ fun ImageModerationScreen(
                         isImage = true
                     )
                     TextButton(
-                        onClick = { viewModel.resetState() },
+                        onClick = onReset,
                         modifier = Modifier.align(Alignment.End)
                     ) {
                         Text("Pick Another Image")
@@ -198,5 +221,21 @@ fun ImageModerationScreen(
                 }
             }
         }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+fun ImageModerationScreenPreview() {
+    KGuardTheme {
+        ImageModerationContent(
+            selectedImageUri = null,
+            uiState = ModerationUiState.Idle,
+            activeAgeProfile = AgeProfile.PRETEENS_8_12,
+            onPickImage = {},
+            onSubmit = {},
+            onReset = {},
+            onNavigateBack = {}
+        )
     }
 }

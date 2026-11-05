@@ -18,10 +18,12 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.tele.k_guard.data.model.AgeProfile
 import com.tele.k_guard.ui.components.AgeProfileCard
 import com.tele.k_guard.ui.components.KGuardTopAppBar
+import com.tele.k_guard.ui.theme.KGuardTheme
 import com.tele.k_guard.viewmodel.AgeProfileViewModel
 
 @Composable
@@ -32,6 +34,21 @@ fun AgeProfileScreen(
 ) {
     val selectedProfile by viewModel.selectedAgeProfile.collectAsState()
 
+    AgeProfileContent(
+        selectedProfile = selectedProfile,
+        onSelectProfile = { viewModel.selectAgeProfile(it) },
+        onSaveAndContinue = onSaveAndContinue,
+        onNavigateBack = onNavigateBack
+    )
+}
+
+@Composable
+fun AgeProfileContent(
+    selectedProfile: AgeProfile,
+    onSelectProfile: (AgeProfile) -> Unit,
+    onSaveAndContinue: () -> Unit,
+    onNavigateBack: () -> Unit
+) {
     Scaffold(
         topBar = {
             KGuardTopAppBar(
@@ -68,9 +85,7 @@ fun AgeProfileScreen(
                     AgeProfileCard(
                         profile = profile,
                         isSelected = profile == selectedProfile,
-                        onSelect = {
-                            viewModel.selectAgeProfile(profile)
-                        }
+                        onSelect = { onSelectProfile(profile) }
                     )
                 }
             }
@@ -91,5 +106,18 @@ fun AgeProfileScreen(
                 )
             }
         }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+fun AgeProfileScreenPreview() {
+    KGuardTheme {
+        AgeProfileContent(
+            selectedProfile = AgeProfile.PRETEENS_8_12,
+            onSelectProfile = {},
+            onSaveAndContinue = {},
+            onNavigateBack = {}
+        )
     }
 }

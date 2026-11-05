@@ -39,9 +39,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.tele.k_guard.data.model.AgeProfile
 import com.tele.k_guard.ui.components.KGuardTopAppBar
+import com.tele.k_guard.ui.theme.KGuardTheme
 
 @Composable
 fun HomeScreen(
@@ -307,3 +309,24 @@ private fun DashboardToolCard(
         }
     }
 }
+
+@Preview(showBackground = true)
+@Composable
+fun HomeScreenPreview() {
+    KGuardTheme {
+        HomeScreen(
+            activeAgeProfile = AgeProfile.PRETEENS_8_12,
+            activeChildName = "Alex",
+            openAlertCount = 2,
+            onNavigateToTextModeration = {},
+            onNavigateToImageModeration = {},
+            onNavigateToAgeProfile = {},
+            onNavigateToScreenTime = {},
+            onNavigateToAppManagement = {},
+            onNavigateToFlaggedContent = {},
+            onNavigateToPrivacy = {},
+            onNavigateToWebProtection = {}
+        )
+    }
+}
+

@@ -33,11 +33,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.tele.k_guard.data.model.ChildProfile
 import com.tele.k_guard.data.model.ParentAction
 import com.tele.k_guard.data.model.SafetyEvent
 import com.tele.k_guard.ui.components.DecisionBadge
 import com.tele.k_guard.ui.components.KGuardTopAppBar
+import com.tele.k_guard.ui.theme.KGuardTheme
 import com.tele.k_guard.viewmodel.SessionViewModel
 import java.text.DateFormat
 
@@ -47,6 +50,24 @@ fun ReviewQueueScreen(session: SessionViewModel, onNavigateBack: () -> Unit) {
     val events by session.events.collectAsState()
     val children by session.children.collectAsState()
     val error by session.error.collectAsState()
+
+    ReviewQueueContent(
+        events = events,
+        children = children,
+        error = error,
+        onReview = { eventId, action, note -> session.review(eventId, action, note) },
+        onNavigateBack = onNavigateBack
+    )
+}
+
+@Composable
+fun ReviewQueueContent(
+    events: List<SafetyEvent>,
+    children: List<ChildProfile>,
+    error: String?,
+    onReview: (String, ParentAction, String) -> Unit,
+    onNavigateBack: () -> Unit
+) {
     var onlyOpen by remember { mutableStateOf(true) }
     var childFilter by remember { mutableStateOf<String?>(null) }
     var pending by remember { mutableStateOf<Pair<SafetyEvent, ParentAction>?>(null) }
@@ -99,7 +120,7 @@ fun ReviewQueueScreen(session: SessionViewModel, onNavigateBack: () -> Unit) {
                     OutlinedTextField(note, { note = it.take(300) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
                 }
             },
-            confirmButton = { TextButton(onClick = { session.review(ev.id, action, note); pending = null }) { Text("Confirm") } },
+            confirmButton = { TextButton(onClick = { onReview(ev.id, action, note); pending = null }) { Text("Confirm") } },
             dismissButton = { TextButton(onClick = { pending = null }) { Text("Cancel") } }
         )
     }
@@ -153,5 +174,30 @@ private fun EventCard(ev: SafetyEvent, onAction: (ParentAction) -> Unit) {
                     style = MaterialTheme.typography.labelMedium, color = androidx.compose.ui.graphics.Color(0xFF2E7D32))
             }
         }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+fun ReviewQueueScreenPreview() {
+    val sampleEvent = SafetyEvent(
+        id = "1",
+        childName = "Alex",
+        contentType = "text",
+        category = "bullying",
+        context = "Pre-Teens profile",
+        decision = "WARN",
+        explanation = "Contains mild teasing or insensitive language.",
+        snippet = "Hey loser, you can't play with us",
+        isOpen = true
+    )
+    KGuardTheme {
+        ReviewQueueContent(
+            events = listOf(sampleEvent),
+            children = emptyList(),
+            error = null,
+            onReview = { _, _, _ -> },
+            onNavigateBack = {}
+        )
     }
 }

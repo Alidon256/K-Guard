@@ -171,24 +171,34 @@ fun ModerationResultCard(
             Row(
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "Risk Score: ",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = "${(response.riskScore * 100).toInt()}%",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (response.riskScore > 0.6f) Color(0xFFC62828) else Color(0xFF2E7D32),
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.width(16.dp))
-                Text(
-                    text = if (response.ageAppropriate) "Suitable for Age" else "Unsuitable for Age",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (response.ageAppropriate) Color(0xFF2E7D32) else Color(0xFFC62828),
-                    fontWeight = FontWeight.Bold
-                )
+                if (response.parsedDecision == ModerationDecision.REVIEW) {
+                    // Nothing was scored, so don't show a risk number or a suitability verdict.
+                    Text(
+                        text = "Not assessed yet",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFF6A1B9A),
+                        fontWeight = FontWeight.Bold
+                    )
+                } else {
+                    Text(
+                        text = "Risk Score: ",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "${(response.riskScore * 100).toInt()}%",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (response.riskScore > 0.6f) Color(0xFFC62828) else Color(0xFF2E7D32),
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Text(
+                        text = if (response.ageAppropriate) "Suitable for Age" else "Unsuitable for Age",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (response.ageAppropriate) Color(0xFF2E7D32) else Color(0xFFC62828),
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(12.dp))

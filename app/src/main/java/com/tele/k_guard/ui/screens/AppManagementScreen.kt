@@ -35,11 +35,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.tele.k_guard.data.model.AgeProfile
 import com.tele.k_guard.data.model.AppAccessInfo
 import com.tele.k_guard.data.model.AppApprovalStatus
 import com.tele.k_guard.ui.components.KGuardTopAppBar
+import com.tele.k_guard.ui.theme.KGuardTheme
 import com.tele.k_guard.viewmodel.AppManagementViewModel
 
 @Composable
@@ -50,6 +52,23 @@ fun AppManagementScreen(
 ) {
     val managedApps by viewModel.managedApps.collectAsState()
 
+    AppManagementContent(
+        managedApps = managedApps,
+        activeAgeProfile = activeAgeProfile,
+        onApprove = { viewModel.approveApp(it) },
+        onReject = { viewModel.rejectApp(it) },
+        onNavigateBack = onNavigateBack
+    )
+}
+
+@Composable
+fun AppManagementContent(
+    managedApps: List<AppAccessInfo>,
+    activeAgeProfile: AgeProfile,
+    onApprove: (String) -> Unit,
+    onReject: (String) -> Unit,
+    onNavigateBack: () -> Unit
+) {
     Scaffold(
         topBar = {
             KGuardTopAppBar(
@@ -91,8 +110,8 @@ fun AppManagementScreen(
                 items(managedApps) { app ->
                     ManagedAppCard(
                         app = app,
-                        onApprove = { viewModel.approveApp(app.id) },
-                        onReject = { viewModel.rejectApp(app.id) }
+                        onApprove = { onApprove(app.id) },
+                        onReject = { onReject(app.id) }
                     )
                 }
             }
@@ -224,3 +243,21 @@ private fun StatusTag(status: AppApprovalStatus) {
         style = MaterialTheme.typography.labelMedium
     )
 }
+
+@Preview(showBackground = true)
+@Composable
+fun AppManagementScreenPreview() {
+    KGuardTheme {
+        AppManagementContent(
+            managedApps = listOf(
+                AppAccessInfo("1", "Roblox", "com.roblox.client", "Games", 10, 68, AppApprovalStatus.PENDING_REVIEW, 30, "Contains unmoderated user chat."),
+                AppAccessInfo("2", "Duolingo", "com.duolingo", "Education", 4, 95, AppApprovalStatus.APPROVED, 60, "Safe educational app with high safety rating.")
+            ),
+            activeAgeProfile = AgeProfile.PRETEENS_8_12,
+            onApprove = {},
+            onReject = {},
+            onNavigateBack = {}
+        )
+    }
+}
+

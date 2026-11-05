@@ -36,10 +36,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.tele.k_guard.data.model.FamilyPrivacy
 import com.tele.k_guard.data.model.QuietHours
 import com.tele.k_guard.ui.components.KGuardTopAppBar
+import com.tele.k_guard.ui.theme.KGuardTheme
 import com.tele.k_guard.viewmodel.SessionViewModel
 import java.util.TimeZone
 
@@ -51,6 +53,25 @@ fun PrivacyScreen(session: SessionViewModel, onNavigateBack: () -> Unit) {
     val busy by session.busy.collectAsState()
     val user by session.user.collectAsState()
 
+    PrivacyContent(
+        saved = saved,
+        busy = busy,
+        userEmail = user?.email,
+        onSavePrivacy = { session.savePrivacy(it) },
+        onSignOut = { session.signOut() },
+        onNavigateBack = onNavigateBack
+    )
+}
+
+@Composable
+fun PrivacyContent(
+    saved: FamilyPrivacy,
+    busy: Boolean,
+    userEmail: String?,
+    onSavePrivacy: (FamilyPrivacy) -> Unit,
+    onSignOut: () -> Unit,
+    onNavigateBack: () -> Unit
+) {
     var notifyOn by remember(saved) { mutableStateOf(saved.notifyOn) }
     var includeSnippet by remember(saved) { mutableStateOf(saved.includeSnippet) }
     var retainDays by remember(saved) { mutableStateOf(saved.retainDays) }
@@ -114,7 +135,7 @@ fun PrivacyScreen(session: SessionViewModel, onNavigateBack: () -> Unit) {
             Spacer(Modifier.height(20.dp))
             Button(
                 onClick = {
-                    session.savePrivacy(
+                    onSavePrivacy(
                         FamilyPrivacy(
                             notifyOn = notifyOn, includeSnippet = includeSnippet, retainDays = retainDays,
                             quietHours = QuietHours(quiet, qStart, qEnd, TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 60000)
@@ -125,8 +146,8 @@ fun PrivacyScreen(session: SessionViewModel, onNavigateBack: () -> Unit) {
             ) { Text(if (busy) "Saving…" else "Save settings") }
 
             Spacer(Modifier.height(24.dp)); HorizontalDivider(); Spacer(Modifier.height(12.dp))
-            Text("Signed in as ${user?.email ?: "—"}", style = MaterialTheme.typography.bodySmall)
-            OutlinedButton(onClick = { session.signOut() }, modifier = Modifier.padding(top = 8.dp)) { Text("Sign out") }
+            Text("Signed in as ${userEmail ?: "—"}", style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = onSignOut, modifier = Modifier.padding(top = 8.dp)) { Text("Sign out") }
         }
     }
 }
@@ -134,4 +155,19 @@ fun PrivacyScreen(session: SessionViewModel, onNavigateBack: () -> Unit) {
 @Composable
 private fun Section(text: String) {
     Text(text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 6.dp))
+}
+
+@Preview(showBackground = true)
+@Composable
+fun PrivacyScreenPreview() {
+    KGuardTheme {
+        PrivacyContent(
+            saved = FamilyPrivacy(),
+            busy = false,
+            userEmail = "parent@example.com",
+            onSavePrivacy = {},
+            onSignOut = {},
+            onNavigateBack = {}
+        )
+    }
 }

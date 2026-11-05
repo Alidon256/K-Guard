@@ -26,7 +26,7 @@ class ModerationRepository(
 ) {
 
     suspend fun moderateText(text: String, childId: String): Result<ModerationResponse> =
-        call(mapOf("type" to "text", "text" to text, "childId" to childId))
+        if (com.tele.k_guard.DebugPreview.demo) Result.success(demoText(text)) else call(mapOf("type" to "text", "text" to text, "childId" to childId))
 
     suspend fun moderateImage(context: Context, uri: Uri, childId: String): Result<ModerationResponse> =
         withContext(Dispatchers.IO) {
@@ -81,6 +81,18 @@ class ModerationRepository(
         canReveal = m["canReveal"] as? Boolean ?: false,
         eventId = m["eventId"] as? String
     )
+
+    /** Debug demo only: canned answers so the result UIs can be previewed without a backend. */
+    private fun demoText(t: String): ModerationResponse {
+        val s = t.lowercase()
+        return when {
+            "kill" in s -> ModerationResponse("threat", 0.92f, false, "BLOCK", "Likely contains threatening language, which is not suitable for ages 8-12.", "harmful")
+            "ugly" in s || "stupid" in s -> ModerationResponse("cyberbullying", 0.68f, false, "WARN", "Likely contains bullying or harassment, which is not suitable for ages 8-12.", "harmful")
+            "war" in s || "blood" in s -> ModerationResponse("violence", 0.75f, false, "BLUR", "Contains violent content in an educational setting, so the response was reduced for ages 8-12.", "educational", canReveal = false)
+            "offline" in s -> unavailable()
+            else -> ModerationResponse("general", 0.04f, true, "ALLOW", "No concerns were found for this age group.", "unclear")
+        }
+    }
 
     private fun unavailable() = ModerationResponse(
         category = "unavailable",

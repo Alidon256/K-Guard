@@ -17,7 +17,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -71,7 +70,7 @@ fun WebProtectionScreen(session: SessionViewModel, onNavigateBack: () -> Unit) {
     val store = remember { VpnConfigStore(context) }
     val child by session.selectedChild.collectAsState()
     val events by session.events.collectAsState()
-    var tab by remember { mutableIntStateOf(0) }
+    var tab by remember { mutableIntStateOf(com.tele.k_guard.DebugPreview.webTab) }
 
     // Keep the service's copy of the child's age group and rules current.
     LaunchedEffect(child) { child?.let { store.applyChild(it) } }
@@ -84,7 +83,10 @@ fun WebProtectionScreen(session: SessionViewModel, onNavigateBack: () -> Unit) {
                 Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Status") })
                 Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Categories") })
                 Tab(selected = tab == 2, onClick = { tab = 2 }, text = {
-                    BadgedBox(badge = { if (openWeb > 0) Badge { Text("$openWeb") } }) { Text("Activity") }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Activity")
+                        if (openWeb > 0) Badge { Text("$openWeb") }
+                    }
                 })
             }
             when (tab) {

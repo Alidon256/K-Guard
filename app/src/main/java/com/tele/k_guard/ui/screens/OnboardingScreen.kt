@@ -30,7 +30,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.tele.k_guard.ui.theme.KGuardTheme
 
 @Composable
 fun OnboardingScreen(
@@ -124,7 +126,7 @@ fun OnboardingScreen(
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Text(
-                    text = "Configure Age Profile",
+                    text = "Get started",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -157,3 +159,12 @@ private fun FeatureRow(title: String, description: String) {
         }
     }
 }
+
+@Preview(showBackground = true)
+@Composable
+fun OnboardingScreenPreview() {
+    KGuardTheme {
+        OnboardingScreen(onGetStarted = {})
+    }
+}
+

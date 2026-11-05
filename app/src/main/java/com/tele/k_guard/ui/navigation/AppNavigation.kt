@@ -52,6 +52,7 @@ fun AppNavigation(
 
     val session: SessionViewModel = viewModel()
     val user by session.user.collectAsState()
+    val signedIn by session.signedIn.collectAsState()
     val authChecked by session.authChecked.collectAsState()
     val selectedChild by session.selectedChild.collectAsState()
     val openAlerts by session.openAlertCount.collectAsState()
@@ -66,8 +67,8 @@ fun AppNavigation(
     val appManagementViewModel: AppManagementViewModel = viewModel()
 
     // Signing out (or an expired session) returns to the sign-in screen from anywhere.
-    LaunchedEffect(user, authChecked) {
-        if (authChecked && user == null) {
+    LaunchedEffect(signedIn, authChecked) {
+        if (authChecked && !signedIn) {
             val current = navController.currentDestination?.route
             if (current != null && current != Screen.SignIn.route && current != Screen.Onboarding.route) {
                 navController.navigate(Screen.SignIn.route) { popUpTo(0) }
@@ -82,7 +83,7 @@ fun AppNavigation(
 
     NavHost(
         navController = navController,
-        startDestination = if (user != null) Screen.Home.route else Screen.Onboarding.route
+        startDestination = com.tele.k_guard.DebugPreview.startRoute?.takeIf { signedIn } ?: if (signedIn) Screen.Home.route else Screen.Onboarding.route
     ) {
         composable(Screen.Onboarding.route) {
             OnboardingScreen(
@@ -92,8 +93,8 @@ fun AppNavigation(
 
         composable(Screen.SignIn.route) {
             SignInScreen(session)
-            LaunchedEffect(user) {
-                if (user != null) {
+            LaunchedEffect(signedIn) {
+                if (signedIn) {
                     navController.navigate(Screen.Home.route) { popUpTo(0) }
                 }
             }

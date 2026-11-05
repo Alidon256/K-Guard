@@ -47,12 +47,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.tele.k_guard.data.model.AgeProfile
 import com.tele.k_guard.data.model.CategoryRule
 import com.tele.k_guard.data.model.ChildProfile
 import com.tele.k_guard.data.model.SafetyCategory
 import com.tele.k_guard.ui.components.KGuardTopAppBar
+import com.tele.k_guard.ui.theme.KGuardTheme
 import com.tele.k_guard.viewmodel.SessionViewModel
 
 /** Lists child profiles; the selected one drives which age rules apply in the checkers. */
@@ -66,6 +68,25 @@ fun ChildrenScreen(
     val selected by session.selectedChild.collectAsState()
     val familyId by session.familyId.collectAsState()
 
+    ChildrenContent(
+        children = children,
+        selected = selected,
+        familyId = familyId,
+        onSelectChild = { session.selectChild(it) },
+        onEditChild = onEditChild,
+        onNavigateBack = onNavigateBack
+    )
+}
+
+@Composable
+fun ChildrenContent(
+    children: List<ChildProfile>,
+    selected: ChildProfile?,
+    familyId: String?,
+    onSelectChild: (String) -> Unit,
+    onEditChild: (String?) -> Unit,
+    onNavigateBack: () -> Unit
+) {
     Scaffold(
         topBar = { KGuardTopAppBar("Children & Protection", canNavigateBack = true, onNavigateBack = onNavigateBack) },
         floatingActionButton = {
@@ -105,7 +126,7 @@ fun ChildrenScreen(
                 items(children, key = { it.id }) { child ->
                     val isSelected = child.id == selected?.id
                     Card(
-                        modifier = Modifier.fillMaxWidth().clickable { session.selectChild(child.id) },
+                        modifier = Modifier.fillMaxWidth().clickable { onSelectChild(child.id) },
                         shape = RoundedCornerShape(16.dp),
                         colors = CardDefaults.cardColors(
                             containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer
@@ -155,6 +176,29 @@ fun ChildEditorScreen(
     val error by session.error.collectAsState()
     val existing = children.find { it.id == childId }
 
+    ChildEditorContent(
+        existing = existing,
+        busy = busy,
+        error = error,
+        onSaveChild = { updatedChild ->
+            session.saveChild(updatedChild, onDone = onNavigateBack)
+        },
+        onDeleteChild = { id ->
+            session.deleteChild(id, onNavigateBack)
+        },
+        onNavigateBack = onNavigateBack
+    )
+}
+
+@Composable
+fun ChildEditorContent(
+    existing: ChildProfile?,
+    busy: Boolean,
+    error: String?,
+    onSaveChild: (ChildProfile) -> Unit,
+    onDeleteChild: (String) -> Unit,
+    onNavigateBack: () -> Unit
+) {
     var name by remember(existing?.id) { mutableStateOf(existing?.name ?: "") }
     var ageId by remember(existing?.id) { mutableStateOf(existing?.ageProfile ?: AgeProfile.PRETEENS_8_12.id) }
     var rules by remember(existing?.id) { mutableStateOf(existing?.categoryRules ?: emptyMap()) }
@@ -165,7 +209,7 @@ fun ChildEditorScreen(
     Scaffold(
         topBar = {
             KGuardTopAppBar(
-                if (childId == null) "Add child" else "Edit ${existing?.name ?: "child"}",
+                if (existing == null) "Add child" else "Edit ${existing.name}",
                 canNavigateBack = true, onNavigateBack = onNavigateBack
             )
         }
@@ -255,12 +299,11 @@ fun ChildEditorScreen(
             Spacer(Modifier.height(16.dp))
             Button(
                 onClick = {
-                    session.saveChild(
+                    onSaveChild(
                         (existing ?: ChildProfile()).copy(
                             name = name, ageProfile = ageId, categoryRules = rules,
                             allowReveal = allowReveal && (age == AgeProfile.TEENS_13_17 || age == AgeProfile.ADULTS_18_PLUS)
-                        ),
-                        onDone = onNavigateBack
+                        )
                     )
                 },
                 enabled = name.isNotBlank() && !busy,
@@ -282,9 +325,41 @@ fun ChildEditorScreen(
             title = { Text("Delete ${existing.name}?") },
             text = { Text("The profile and its rules are removed. Past alerts stay in the review queue until they expire.") },
             confirmButton = {
-                TextButton(onClick = { confirmDelete = false; session.deleteChild(existing.id, onNavigateBack) }) { Text("Delete") }
+                TextButton(onClick = { confirmDelete = false; onDeleteChild(existing.id) }) { Text("Delete") }
             },
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } }
+        )
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+fun ChildrenScreenPreview() {
+    val child = ChildProfile(id = "1", name = "Alex", ageProfile = AgeProfile.PRETEENS_8_12.id)
+    KGuardTheme {
+        ChildrenContent(
+            children = listOf(child),
+            selected = child,
+            familyId = "family_1",
+            onSelectChild = {},
+            onEditChild = {},
+            onNavigateBack = {}
+        )
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+fun ChildEditorScreenPreview() {
+    val child = ChildProfile(id = "1", name = "Alex", ageProfile = AgeProfile.PRETEENS_8_12.id)
+    KGuardTheme {
+        ChildEditorContent(
+            existing = child,
+            busy = false,
+            error = null,
+            onSaveChild = {},
+            onDeleteChild = {},
+            onNavigateBack = {}
         )
     }
 }
