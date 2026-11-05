@@ -79,20 +79,113 @@ object DnsPacket {
         else -> "TYPE$type"
     }
 
-    /** Builds an NXDOMAIN response for the given query (same id and question, no answers). */
-    fun nxDomain(query: ByteArray): ByteArray {
-        // Keep header + question only.
+    /** Header plus question of [query], turned into a response with [rcode] and no records. */
+    private fun emptyResponse(query: ByteArray, rcode: Int): ByteArray {
         var pos = 12
         while (pos < query.size && query[pos].toInt() != 0) pos += (query[pos].toInt() and 0xff) + 1
         val end = (pos + 1 + 4).coerceAtMost(query.size) // null label + QTYPE + QCLASS
         val out = query.copyOfRange(0, end)
         val rd = out[2].toInt() and 0x01
         out[2] = (0x80 or rd).toByte()          // QR=1, opcode 0, RD copied
-        out[3] = 0x83.toByte()                  // RA=1, RCODE=3 (NXDOMAIN)
+        out[3] = (0x80 or rcode).toByte()       // RA=1, RCODE
         out[6] = 0; out[7] = 0                  // ANCOUNT
         out[8] = 0; out[9] = 0                  // NSCOUNT
         out[10] = 0; out[11] = 0                // ARCOUNT
         return out
+    }
+
+    /** Builds an NXDOMAIN response for the given query (same id and question, no answers). */
+    fun nxDomain(query: ByteArray): ByteArray = emptyResponse(query, 3)
+
+    /** NOERROR with no answers: the name exists but has no records of the asked type. */
+    fun noData(query: ByteArray): ByteArray = emptyResponse(query, 0)
+
+    /** A recursive query for [name] and [type], used to ask the upstream resolver on our own behalf. */
+    fun buildQuery(name: String, type: Int, id: Int = 0x4b47): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        out.write(byteArrayOf((id shr 8).toByte(), id.toByte(), 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0)) // RD, QDCOUNT=1
+        out.write(encodeName(name))
+        out.write(byteArrayOf((type shr 8).toByte(), type.toByte(), 0, 1)) // QTYPE, QCLASS=IN
+        return out.toByteArray()
+    }
+
+    /**
+     * An answer that says the name asked in [query] is an alias (CNAME) of [target], followed by the
+     * target's [addresses] (4 bytes for A, 16 for AAAA). This is how SafeSearch and Restricted Mode are enforced.
+     */
+    fun cnameAnswer(query: ByteArray, target: String, addresses: List<ByteArray>, ttl: Int = 60): ByteArray {
+        val head = emptyResponse(query, 0)
+        val count = 1 + addresses.size
+        head[6] = (count shr 8).toByte(); head[7] = count.toByte()
+        val out = java.io.ByteArrayOutputStream()
+        out.write(head)
+        val targetName = encodeName(target)
+
+        fun record(owner: ByteArray, type: Int, rdata: ByteArray) {
+            out.write(owner)
+            out.write(byteArrayOf((type shr 8).toByte(), type.toByte(), 0, 1)) // TYPE, CLASS=IN
+            out.write(byteArrayOf((ttl shr 24).toByte(), (ttl shr 16).toByte(), (ttl shr 8).toByte(), ttl.toByte()))
+            out.write(byteArrayOf((rdata.size shr 8).toByte(), rdata.size.toByte()))
+            out.write(rdata)
+        }
+
+        // The CNAME's owner is the question name (pointer to offset 12); its data is the target name.
+        val targetOffset = out.size() + 2 + 2 + 2 + 4 + 2 // owner + type + class + ttl + rdlength
+        record(byteArrayOf(0xC0.toByte(), 0x0C), 5, targetName)
+        // Address records are owned by the target, which now sits in the message at targetOffset.
+        val pointer = byteArrayOf((0xC0 or (targetOffset shr 8)).toByte(), targetOffset.toByte())
+        for (a in addresses) record(pointer, if (a.size == 16) 28 else 1, a)
+        return out.toByteArray()
+    }
+
+    /** The A (type 1) or AAAA (type 28) addresses in a DNS response. CNAME hops and other records are skipped. */
+    fun parseAddresses(response: ByteArray, type: Int): List<ByteArray> {
+        if (response.size < 12) return emptyList()
+        if ((response[2].toInt() and 0x80) == 0) return emptyList() // not a response
+        if ((response[3].toInt() and 0x0f) != 0) return emptyList() // an error such as NXDOMAIN
+        val want = if (type == 28) 16 else 4
+        var pos = 12
+        repeat(u16(response, 4)) {
+            pos = skipName(response, pos) ?: return emptyList()
+            pos += 4 // QTYPE + QCLASS
+        }
+        val found = ArrayList<ByteArray>()
+        repeat(u16(response, 6)) {
+            pos = skipName(response, pos) ?: return found
+            if (pos + 10 > response.size) return found
+            val t = u16(response, pos)
+            val rdlen = u16(response, pos + 8)
+            pos += 10
+            if (pos + rdlen > response.size) return found
+            if (t == type && rdlen == want) found += response.copyOfRange(pos, pos + rdlen)
+            pos += rdlen
+        }
+        return found
+    }
+
+    /** A name as DNS labels: length-prefixed parts ending in a zero byte. */
+    private fun encodeName(name: String): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        for (label in name.trimEnd('.').split('.')) {
+            require(label.length in 1..63) { "bad DNS label in $name" }
+            out.write(label.length)
+            out.write(label.toByteArray(Charsets.US_ASCII))
+        }
+        out.write(0)
+        return out.toByteArray()
+    }
+
+    /** Position just after the name that starts at [start], following a compression pointer if there is one. */
+    private fun skipName(b: ByteArray, start: Int): Int? {
+        var pos = start
+        while (true) {
+            if (pos >= b.size) return null
+            val len = b[pos].toInt() and 0xff
+            if (len == 0) return pos + 1
+            if (len and 0xC0 == 0xC0) return if (pos + 2 <= b.size) pos + 2 else null
+            if (len and 0xC0 != 0) return null
+            pos += len + 1
+        }
     }
 
     /** Wraps a UDP payload in an IPv4 packet (UDP checksum 0, which IPv4 permits). */

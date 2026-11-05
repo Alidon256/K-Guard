@@ -119,9 +119,12 @@ class KGuardVpnService : VpnService() {
             QueryMonitor.record(name, type, verdict, QueryMonitor.Outcome.BLOCKED, elapsedMs(started))
             return
         }
+        // Search engines and YouTube are pointed at their safe-mode hosts instead of being answered normally.
+        val safeTarget = if (name != null) SafeSearch.targetFor(name, cfg.policy.ageProfile) else null
         forwarders.execute {
             val upstreamStarted = System.nanoTime()
-            val answer = forward(q.dns)
+            // If the safe host can't be resolved the lookup goes unanswered; it never falls back to the unsafe original.
+            val answer = if (safeTarget != null) safeAnswer(q.dns, safeTarget) else forward(q.dns)
             val upstreamMs = elapsedMs(upstreamStarted)
             if (answer == null) { // unanswered: the app retries, like a normal timeout
                 if (name != null) QueryMonitor.record(name, type, verdict, QueryMonitor.Outcome.UNANSWERED, 0)
@@ -130,8 +133,23 @@ class KGuardVpnService : VpnService() {
             write(out, DnsPacket.reply(q, answer))
             // "Added" latency is what K-Guard itself cost, so the upstream resolver's time is taken out.
             if (name != null) {
-                QueryMonitor.record(name, type, verdict, QueryMonitor.Outcome.ALLOWED, (elapsedMs(started) - upstreamMs).coerceAtLeast(0))
+                val outcome = if (safeTarget != null) QueryMonitor.Outcome.REWRITTEN else QueryMonitor.Outcome.ALLOWED
+                QueryMonitor.record(name, type, verdict, outcome, (elapsedMs(started) - upstreamMs).coerceAtLeast(0))
             }
+        }
+    }
+
+    /** Answers [dns] as an alias of [target]. A/AAAA get the target's real addresses behind a CNAME. */
+    private fun safeAnswer(dns: ByteArray, target: String): ByteArray? {
+        val type = DnsPacket.parseQType(dns) ?: return null
+        return when (type) {
+            1, 28 -> {
+                val upstream = forward(DnsPacket.buildQuery(target, type)) ?: return null
+                DnsPacket.cnameAnswer(dns, target, DnsPacket.parseAddresses(upstream, type))
+            }
+            // HTTPS/SVCB records can carry real addresses and would let a browser skip the rewrite.
+            64, 65 -> DnsPacket.noData(dns)
+            else -> forward(dns) // MX, TXT and so on: nothing to enforce
         }
     }
 

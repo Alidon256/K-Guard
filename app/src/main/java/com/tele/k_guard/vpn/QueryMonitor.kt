@@ -21,7 +21,7 @@ import java.util.Locale
  */
 object QueryMonitor {
 
-    enum class Outcome { ALLOWED, BLOCKED, UNANSWERED }
+    enum class Outcome { ALLOWED, BLOCKED, REWRITTEN, UNANSWERED }
 
     /** One lookup, kept in memory in debuggable builds only. [addedMs] is the time K-Guard added, excluding the upstream resolver. */
     class Entry(
