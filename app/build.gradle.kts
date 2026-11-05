@@ -1,8 +1,22 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.google.gms.google.services)
+}
+
+/**
+ * Release signing lives outside git: a `keystore.properties` at the repo root (gitignored) or
+ * `~/keystores/k-guard-release.properties` on the build machine. Without one, the release
+ * build simply stays unsigned — never put the password in this file.
+ */
+private val keystoreProps = Properties().apply {
+    listOfNotNull(rootProject.file("keystore.properties"),
+        file("${System.getProperty("user.home")}/keystores/k-guard-release.properties"))
+        .firstOrNull { it.isFile }
+        ?.inputStream()?.use { load(it) }
 }
 
 android {
@@ -19,12 +33,24 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (keystoreProps.isNotEmpty()) {
+            create("release") {
+                storeFile = file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
             optimization {
                 enable = true
                 packageScope = setOf("androidx.**", "kotlin.**", "kotlinx.**")
             }
+            if (keystoreProps.isNotEmpty()) signingConfig = signingConfigs.getByName("release")
         }
     }
     compileOptions {
