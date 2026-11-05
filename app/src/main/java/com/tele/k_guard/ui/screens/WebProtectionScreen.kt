@@ -305,7 +305,7 @@ private fun DomainEditor(
     Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
     Text(hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 4.dp)) {
-        OutlinedTextField(value, onChange, label = { Text("example.com") }, singleLine = true, isError = error, modifier = Modifier.weight(1f))
+        OutlinedTextField(value, onChange, label = { Text("example.com") }, singleLine = true, isError = error, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp))
         Button(onClick = onAdd, modifier = Modifier.padding(top = 8.dp)) { Text("Add") }
     }
     if (error) Text("Enter a website like example.com", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
@@ -430,7 +430,7 @@ fun WebProtectionStatusContent(
             Text("Check a site", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Text("See what K-Guard would do for this profile, and why.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(site, { site = it }, label = { Text("example.com") }, singleLine = true, modifier = Modifier.weight(1f))
+                OutlinedTextField(site, { site = it }, label = { Text("example.com") }, singleLine = true, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp))
                 Button(enabled = site.isNotBlank() && childName != null, onClick = {}) { Text("Check") }
             }
 

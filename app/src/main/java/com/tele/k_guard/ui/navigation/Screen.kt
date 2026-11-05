@@ -16,4 +16,6 @@ sealed class Screen(val route: String) {
     }
     object Privacy : Screen("privacy")
     object WebProtection : Screen("web_protection")
+    object ChildPinSetup : Screen("child_pin_setup")
+    object ChildDashboard : Screen("child_dashboard")
 }

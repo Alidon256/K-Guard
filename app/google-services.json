@@ -12,7 +12,20 @@
           "package_name": "com.tele.k_guard"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "806029279640-8tt6nse9mlknhrbu34ics7pinnf2l3r8.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.tele.k_guard",
+            "certificate_hash": "a040b91ac2cdc6604e3913baa5e42fd9455b4c3c"
+          }
+        },
+        {
+          "client_id": "806029279640-lfli9qm2j81oha5jak33414eqocl78rf.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyCrWQm9ipwtWNwy7EjMMj1j6eK9VgANJmE"
@@ -20,7 +33,12 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "806029279640-lfli9qm2j81oha5jak33414eqocl78rf.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }

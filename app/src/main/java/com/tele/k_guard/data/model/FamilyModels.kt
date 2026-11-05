@@ -40,7 +40,8 @@ data class ChildProfile(
     val categoryRules: Map<String, String> = emptyMap(),
     val allowReveal: Boolean = false,
     val linkedUid: String? = null,
-    val createdAt: Timestamp? = null
+    val createdAt: Timestamp? = null,
+    val photoUrl: String = ""
 ) {
     val age: AgeProfile get() = AgeProfile.fromId(ageProfile)
     fun ruleFor(category: SafetyCategory): CategoryRule? = CategoryRule.fromId(categoryRules[category.id])

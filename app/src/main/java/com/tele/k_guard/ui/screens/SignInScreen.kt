@@ -1,5 +1,6 @@
 package com.tele.k_guard.ui.screens
 
+import android.util.Log
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -32,6 +33,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,28 +43,78 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.credentials.CredentialManager
+import androidx.credentials.GetCredentialRequest
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.google.firebase.auth.GoogleAuthProvider
+import kotlinx.coroutines.launch
 import com.tele.k_guard.DebugPreview
+import com.tele.k_guard.R
 import com.tele.k_guard.ui.theme.KGuardTheme
 import com.tele.k_guard.viewmodel.SessionViewModel
 
 @Composable
-fun SignInScreen(session: SessionViewModel) {
+fun SignInScreen(
+    session: SessionViewModel,
+    onChildPaired: () -> Unit = {}
+) {
     val busy by session.busy.collectAsState()
     val error by session.error.collectAsState()
     val context = LocalContext.current
+    val clientId = remember(context) { context.getString(R.string.default_web_client_id) }
+    val scope = rememberCoroutineScope()
     val showDemo = remember(context) { runCatching { DebugPreview.isDebuggable(context) }.getOrDefault(false) }
 
     SignInContent(
         busy = busy,
         error = error,
         showDemoButton = showDemo,
-        onSignIn = { email, password -> session.signIn(email, password) },
-        onSignUp = { email, password -> session.signUp(email, password) },
-        onParentGoogleSignIn = {
-            // Parent Google Auth
+        onSignIn = { email, password ->
+            Log.d("KGuard", "UI: User clicked Sign In with Email: $email")
+            session.signIn(email, password)
         },
-        onRedeemOtp = { otp -> session.redeemPairingCode(otp) },
+        onSignUp = { email, password ->
+            Log.d("KGuard", "UI: User clicked Create Account with Email: $email")
+            session.signUp(email, password)
+        },
+        onParentGoogleSignIn = {
+            Log.d("KGuard", "UI: User clicked Sign In with Google")
+            scope.launch {
+                try {
+                    val credentialManager = CredentialManager.create(context)
+                    val googleIdOption = GetGoogleIdOption.Builder()
+                        .setFilterByAuthorizedAccounts(false)
+                        .setServerClientId(clientId)
+                        .build()
+
+                    val request = GetCredentialRequest.Builder()
+                        .addCredentialOption(googleIdOption)
+                        .build()
+
+                    val result = credentialManager.getCredential(context, request)
+                    val credential = result.credential
+                    if (credential is androidx.credentials.CustomCredential &&
+                        credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
+                    ) {
+                        val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
+                        val firebaseCredential = GoogleAuthProvider.getCredential(googleIdTokenCredential.idToken, null)
+                        Log.d("KGuard", "UI: Google credential retrieved successfully, signing in with Firebase...")
+                        session.signInWithCredential(firebaseCredential)
+                    } else {
+                        Log.e("KGuard", "UI: Unexpected credential type received from Credential Manager")
+                    }
+                } catch (e: Exception) {
+                    Log.e("KGuard", "UI: Google Sign-In error", e)
+                }
+            }
+        },
+        onRedeemOtp = { otp ->
+            Log.d("KGuard", "UI: User clicked Redeem OTP: $otp")
+            session.redeemPairingCode(otp, onDone = onChildPaired)
+        },
         onDemoClick = {
+            Log.d("KGuard", "UI: User clicked Explore Demo Mode")
             DebugPreview.demo = true
             session.enterDemo()
         }
@@ -120,41 +172,6 @@ fun SignInContent(
             )
         }
 
-        Spacer(Modifier.height(16.dp))
-
-        if (!isChildMode) {
-            OutlinedTextField(
-                value = email, onValueChange = { email = it }, label = { Text("Email") },
-                singleLine = true, modifier = Modifier.fillMaxWidth(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                shape = RoundedCornerShape(12.dp)
-            )
-            Spacer(Modifier.height(12.dp))
-            OutlinedTextField(
-                value = password, onValueChange = { password = it }, label = { Text("Password (6+ characters)") },
-                singleLine = true, modifier = Modifier.fillMaxWidth(),
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                shape = RoundedCornerShape(12.dp)
-            )
-        } else {
-            Text(
-                "Enter the 6-digit pairing OTP code generated in your Parent Dashboard when creating your child's profile:",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(12.dp))
-            OutlinedTextField(
-                value = otpCode,
-                onValueChange = { if (it.length <= 6) otpCode = it.filter { c -> c.isDigit() } },
-                label = { Text("6-Digit Pairing OTP Code") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                shape = RoundedCornerShape(12.dp)
-            )
-        }
-
         error?.let {
             Spacer(Modifier.height(8.dp))
             Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
@@ -166,6 +183,21 @@ fun SignInContent(
             CircularProgressIndicator()
         } else {
             if (!isChildMode) {
+                OutlinedTextField(
+                    value = email, onValueChange = { email = it }, label = { Text("Email") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                    shape = RoundedCornerShape(12.dp)
+                )
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = password, onValueChange = { password = it }, label = { Text("Password (6+ characters)") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    shape = RoundedCornerShape(12.dp)
+                )
+                Spacer(Modifier.height(16.dp))
                 Button(
                     onClick = { onSignIn(email, password) },
                     enabled = validParent,
@@ -194,6 +226,40 @@ fun SignInContent(
                     Text("Sign in with Google")
                 }
             } else {
+                Text(
+                    "Step 1: Sign in with the child's Google account to authorize this device.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = onParentGoogleSignIn,
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Sign in with Google (Child)")
+                }
+
+                Spacer(Modifier.height(16.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(16.dp))
+
+                Text(
+                    "Step 2: Enter the 6-digit pairing OTP code generated in your Parent Dashboard:",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = otpCode,
+                    onValueChange = { if (it.length <= 6) otpCode = it.filter { c -> c.isDigit() } },
+                    label = { Text("6-Digit Pairing OTP Code") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    shape = RoundedCornerShape(12.dp)
+                )
+                Spacer(Modifier.height(16.dp))
                 Button(
                     onClick = { onRedeemOtp(otpCode.trim()) },
                     enabled = validOtp,

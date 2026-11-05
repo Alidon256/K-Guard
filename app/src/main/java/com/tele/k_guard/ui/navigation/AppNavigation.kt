@@ -7,6 +7,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -21,7 +22,9 @@ import com.tele.k_guard.data.model.AppApprovalStatus
 import com.tele.k_guard.data.repository.UserPreferencesRepository
 import com.tele.k_guard.ui.screens.AgeProfileScreen
 import com.tele.k_guard.ui.screens.AppManagementScreen
+import com.tele.k_guard.ui.screens.ChildDashboardScreen
 import com.tele.k_guard.ui.screens.ChildEditorScreen
+import com.tele.k_guard.ui.screens.ChildPinSetupScreen
 import com.tele.k_guard.ui.screens.ChildrenScreen
 import com.tele.k_guard.ui.screens.HomeScreen
 import com.tele.k_guard.ui.screens.ImageModerationScreen
@@ -39,6 +42,7 @@ import com.tele.k_guard.viewmodel.ImageModerationViewModel
 import com.tele.k_guard.viewmodel.ScreenTimeViewModel
 import com.tele.k_guard.viewmodel.SessionViewModel
 import com.tele.k_guard.viewmodel.TextModerationViewModel
+import kotlinx.coroutines.launch
 
 @Composable
 fun AppNavigation(
@@ -47,6 +51,7 @@ fun AppNavigation(
 ) {
     val context = LocalContext.current.applicationContext
     val userPreferencesRepository = UserPreferencesRepository(context)
+    val scope = rememberCoroutineScope()
     val ageProfileViewModel: AgeProfileViewModel = viewModel(
         factory = AgeProfileViewModelFactory(userPreferencesRepository)
     )
@@ -113,12 +118,30 @@ fun AppNavigation(
         }
 
         composable(Screen.SignIn.route) {
-            SignInScreen(session)
-            LaunchedEffect(signedIn) {
-                if (signedIn) {
-                    navController.navigate(Screen.Home.route) { popUpTo(0) }
+            SignInScreen(
+                session = session,
+                onChildPaired = {
+                    navController.navigate(Screen.ChildPinSetup.route) { popUpTo(0) }
                 }
-            }
+            )
+        }
+
+        composable(Screen.ChildPinSetup.route) {
+            ChildPinSetupScreen(
+                onPinSaved = { pin ->
+                    scope.launch {
+                        userPreferencesRepository.saveParentPinHash(pin)
+                        userPreferencesRepository.saveChildDeviceMode(true, activeChildId)
+                        navController.navigate(Screen.ChildDashboard.route) { popUpTo(0) }
+                    }
+                }
+            )
+        }
+
+        composable(Screen.ChildDashboard.route) {
+            ChildDashboardScreen(
+                childProfile = selectedChild
+            )
         }
 
         composable(Screen.AgeProfile.route) {

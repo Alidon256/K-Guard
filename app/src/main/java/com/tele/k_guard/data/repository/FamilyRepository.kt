@@ -1,5 +1,6 @@
 package com.tele.k_guard.data.repository
 
+import android.util.Log
 import com.google.firebase.auth.AuthCredential
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
@@ -28,95 +29,139 @@ object FamilyRepository {
     val currentUser: FirebaseUser? get() = auth.currentUser
 
     fun authState(): Flow<FirebaseUser?> = callbackFlow {
-        val listener = FirebaseAuth.AuthStateListener { trySend(it.currentUser) }
+        val listener = FirebaseAuth.AuthStateListener {
+            Log.d("KGuard", "FamilyRepository: authState changed, user=${it.currentUser?.email}")
+            trySend(it.currentUser)
+        }
         auth.addAuthStateListener(listener)
         awaitClose { auth.removeAuthStateListener(listener) }
     }
 
     suspend fun signIn(email: String, password: String) {
+        Log.d("KGuard", "FamilyRepository: signInWithEmailAndPassword for $email")
         auth.signInWithEmailAndPassword(email.trim(), password).await()
+        Log.d("KGuard", "FamilyRepository: signInWithEmailAndPassword success for $email")
     }
 
     suspend fun signUp(email: String, password: String) {
+        Log.d("KGuard", "FamilyRepository: createUserWithEmailAndPassword for $email")
         auth.createUserWithEmailAndPassword(email.trim(), password).await()
+        Log.d("KGuard", "FamilyRepository: createUserWithEmailAndPassword success for $email")
     }
 
     suspend fun signInWithCredential(credential: AuthCredential) {
+        Log.d("KGuard", "FamilyRepository: signInWithCredential")
         auth.signInWithCredential(credential).await()
+        Log.d("KGuard", "FamilyRepository: signInWithCredential success")
     }
 
-    fun signOut() = auth.signOut()
+    fun signOut() {
+        Log.d("KGuard", "FamilyRepository: signOut")
+        auth.signOut()
+    }
 
     /** Creates the family on first sign-in (server side) and returns its id. */
     suspend fun ensureFamily(): String {
+        Log.d("KGuard", "FamilyRepository: ensureFamily calling createFamily Cloud Function")
         val res = functions.getHttpsCallable("createFamily").call().await()
         @Suppress("UNCHECKED_CAST")
         val data = res.data as Map<String, Any?>
-        return data["familyId"] as String
+        val familyId = data["familyId"] as String
+        Log.d("KGuard", "FamilyRepository: ensureFamily success, familyId=$familyId")
+        return familyId
     }
 
     // ---------- children ----------
     fun children(familyId: String): Flow<List<ChildProfile>> = callbackFlow {
+        Log.d("KGuard", "FamilyRepository: children flow started for familyId=$familyId")
         val reg = db.collection("families/$familyId/children")
             .orderBy("createdAt", Query.Direction.ASCENDING)
             .addSnapshotListener { snap, err ->
-                if (err != null) { close(err); return@addSnapshotListener }
-                trySend(snap?.documents?.mapNotNull { d ->
+                if (err != null) {
+                    Log.e("KGuard", "FamilyRepository: children listener error", err)
+                    close(err)
+                    return@addSnapshotListener
+                }
+                val list = snap?.documents?.mapNotNull { d ->
                     d.toObject(ChildProfile::class.java)?.copy(id = d.id)
-                } ?: emptyList())
+                } ?: emptyList()
+                Log.d("KGuard", "FamilyRepository: children loaded count=${list.size}")
+                trySend(list)
             }
         awaitClose { reg.remove() }
     }
 
     suspend fun saveChild(familyId: String, child: ChildProfile): String {
+        Log.d("KGuard", "FamilyRepository: saveChild familyId=$familyId, childId=${child.id}, name=${child.name}")
         val col = db.collection("families/$familyId/children")
         val data = hashMapOf<String, Any?>(
             "name" to child.name.trim(),
             "email" to child.email.trim(),
+            "photoUrl" to child.photoUrl.trim(),
             "ageProfile" to child.ageProfile,
             "categoryRules" to child.categoryRules,
             "allowReveal" to child.allowReveal
         )
-        return if (child.id.isEmpty()) {
+        val id = if (child.id.isEmpty()) {
             data["createdAt"] = FieldValue.serverTimestamp()
-            col.add(data).await().id
+            val ref = col.add(data).await()
+            Log.d("KGuard", "FamilyRepository: saveChild created new child with id=${ref.id}")
+            ref.id
         } else {
             col.document(child.id).update(data).await()
+            Log.d("KGuard", "FamilyRepository: saveChild updated child with id=${child.id}")
             child.id
         }
+        return id
     }
 
     suspend fun deleteChild(familyId: String, childId: String) {
+        Log.d("KGuard", "FamilyRepository: deleteChild familyId=$familyId, childId=$childId")
         db.document("families/$familyId/children/$childId").delete().await()
+        Log.d("KGuard", "FamilyRepository: deleteChild success for childId=$childId")
     }
 
     suspend fun createPairingCode(childId: String): String {
+        Log.d("KGuard", "FamilyRepository: createPairingCode for childId=$childId")
         val res = functions.getHttpsCallable("createPairingCode").call(mapOf("childId" to childId)).await()
         @Suppress("UNCHECKED_CAST")
-        return (res.data as Map<String, Any?>)["code"] as String
+        val code = (res.data as Map<String, Any?>)["code"] as String
+        Log.d("KGuard", "FamilyRepository: createPairingCode success, code=$code")
+        return code
     }
 
     suspend fun redeemPairingCode(code: String): Map<String, Any?> {
+        Log.d("KGuard", "FamilyRepository: redeemPairingCode for code=$code")
         val res = functions.getHttpsCallable("redeemPairingCode").call(mapOf("code" to code)).await()
         @Suppress("UNCHECKED_CAST")
-        return res.data as Map<String, Any?>
+        val data = res.data as Map<String, Any?>
+        Log.d("KGuard", "FamilyRepository: redeemPairingCode success")
+        return data
     }
 
     // ---------- events ----------
     fun events(familyId: String, limit: Long = 100): Flow<List<SafetyEvent>> = callbackFlow {
+        Log.d("KGuard", "FamilyRepository: events flow started for familyId=$familyId")
         val reg = db.collection("families/$familyId/events")
             .orderBy("createdAt", Query.Direction.DESCENDING)
             .limit(limit)
             .addSnapshotListener { snap, err ->
-                if (err != null) { close(err); return@addSnapshotListener }
-                trySend(snap?.documents?.mapNotNull { d ->
+                if (err != null) {
+                    Log.e("KGuard", "FamilyRepository: events listener error", err)
+                    close(err)
+                    return@addSnapshotListener
+                }
+                val list = snap?.documents?.mapNotNull { d ->
                     d.toObject(SafetyEvent::class.java)?.copy(id = d.id)
-                } ?: emptyList())
+                } ?: emptyList()
+                Log.d("KGuard", "FamilyRepository: events loaded count=${list.size}")
+                trySend(list)
             }
         awaitClose { reg.remove() }
     }
 
     suspend fun reviewEvent(familyId: String, eventId: String, action: ParentAction, note: String) {
+        Log.d("KGuard", "FamilyRepository: reviewEvent eventId=$eventId, action=${action.id}")
         db.document("families/$familyId/events/$eventId").update(
             mapOf(
                 "status" to "reviewed",
@@ -125,12 +170,17 @@ object FamilyRepository {
                 "reviewedAt" to FieldValue.serverTimestamp()
             )
         ).await()
+        Log.d("KGuard", "FamilyRepository: reviewEvent success for eventId=$eventId")
     }
 
     // ---------- privacy ----------
     fun privacy(familyId: String): Flow<FamilyPrivacy> = callbackFlow {
         val reg = db.document("families/$familyId").addSnapshotListener { snap, err ->
-            if (err != null) { close(err); return@addSnapshotListener }
+            if (err != null) {
+                Log.e("KGuard", "FamilyRepository: privacy listener error", err)
+                close(err)
+                return@addSnapshotListener
+            }
             @Suppress("UNCHECKED_CAST")
             val p = snap?.get("privacy") as? Map<String, Any?>
             @Suppress("UNCHECKED_CAST")
@@ -153,6 +203,7 @@ object FamilyRepository {
     }
 
     suspend fun savePrivacy(familyId: String, p: FamilyPrivacy) {
+        Log.d("KGuard", "FamilyRepository: savePrivacy for familyId=$familyId")
         db.document("families/$familyId").update(
             "privacy", mapOf(
                 "notifyOn" to p.notifyOn,
@@ -166,6 +217,7 @@ object FamilyRepository {
                 )
             )
         ).await()
+        Log.d("KGuard", "FamilyRepository: savePrivacy success")
     }
 
     // ---------- push ----------
@@ -173,5 +225,6 @@ object FamilyRepository {
         val uid = currentUser?.uid ?: return
         val t = token ?: FirebaseMessaging.getInstance().token.await()
         db.document("users/$uid").update("fcmTokens", FieldValue.arrayUnion(t)).await()
+        Log.d("KGuard", "FamilyRepository: registerPushToken success")
     }
 }
