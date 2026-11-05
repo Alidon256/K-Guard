@@ -161,6 +161,9 @@ private fun StatusTab(session: SessionViewModel, store: VpnConfigStore) {
             }
         }
 
+        Spacer(Modifier.height(16.dp))
+        QueryStatsCard()
+
         Spacer(Modifier.height(20.dp))
         Text("Check a site", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Text("See what K-Guard would do for this profile, and why.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

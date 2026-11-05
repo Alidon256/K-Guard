@@ -38,6 +38,11 @@ class KGuardVpnService : VpnService() {
     private val reporter = WebBlockReporter()
     @Volatile private var running = false
 
+    override fun onCreate() {
+        super.onCreate()
+        QueryMonitor.init(this)
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
             VpnConfigStore(this).setEnabled(false)
@@ -97,7 +102,9 @@ class KGuardVpnService : VpnService() {
     }
 
     private fun handle(q: DnsPacket.Query, filter: DomainFilter, store: VpnConfigStore, out: FileOutputStream) {
+        val started = System.nanoTime()
         val name = q.name
+        val type = DnsPacket.typeName(q.qtype ?: 0)
         // Re-read each time so a settings change applies immediately.
         val cfg = store.load()
         val verdict = if (name == null) Verdict(false) else filter.evaluate(name, cfg.policy)
@@ -109,13 +116,26 @@ class KGuardVpnService : VpnService() {
             notifyBlocked(explanation)
             val childId = cfg.childId
             if (childId != null) scope.launch { reporter.report(childId, verdict.category, name) }
+            QueryMonitor.record(name, type, verdict, QueryMonitor.Outcome.BLOCKED, elapsedMs(started))
             return
         }
         forwarders.execute {
-            val answer = forward(q.dns) ?: return@execute // unanswered: the app retries, like a normal timeout
+            val upstreamStarted = System.nanoTime()
+            val answer = forward(q.dns)
+            val upstreamMs = elapsedMs(upstreamStarted)
+            if (answer == null) { // unanswered: the app retries, like a normal timeout
+                if (name != null) QueryMonitor.record(name, type, verdict, QueryMonitor.Outcome.UNANSWERED, 0)
+                return@execute
+            }
             write(out, DnsPacket.reply(q, answer))
+            // "Added" latency is what K-Guard itself cost, so the upstream resolver's time is taken out.
+            if (name != null) {
+                QueryMonitor.record(name, type, verdict, QueryMonitor.Outcome.ALLOWED, (elapsedMs(started) - upstreamMs).coerceAtLeast(0))
+            }
         }
     }
+
+    private fun elapsedMs(startNanos: Long) = (System.nanoTime() - startNanos) / 1_000_000
 
     private var lastNotice = 0L
 
@@ -146,6 +166,7 @@ class KGuardVpnService : VpnService() {
 
     private fun stopFiltering() {
         running = false
+        QueryMonitor.flush()
         VpnState.setRunning(false)
         runCatching { tun?.close() }
         tun = null
