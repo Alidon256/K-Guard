@@ -209,6 +209,7 @@ fun AppNavigation(
         composable(Screen.ScreenTime.route) {
             ScreenTimeScreen(
                 viewModel = screenTimeViewModel,
+                session = session,
                 activeAgeProfile = activeAgeProfile,
                 onNavigateBack = { navController.popBackStack() }
             )

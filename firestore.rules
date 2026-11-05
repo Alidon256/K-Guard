@@ -65,6 +65,13 @@ service cloud.firestore {
         allow read: if isParent(familyId);
         allow write: if isParent(familyId);
       }
+      match /devices/{childId} {
+        allow read: if isParent(familyId) || (signedIn() && resource.data.linkedUid == request.auth.uid);
+        allow write: if isParent(familyId) || (signedIn() && request.resource.data.linkedUid == request.auth.uid);
+      }
+      match /commands/{commandId} {
+        allow read, write: if isParent(familyId) || signedIn();
+      }
     }
 
     match /{document=**} { allow read, write: if false; }
