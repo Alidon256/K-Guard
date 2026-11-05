@@ -37,10 +37,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.tele.k_guard.data.model.AgeProfile
 import com.tele.k_guard.data.model.ScreenTimeConfig
 import com.tele.k_guard.ui.components.KGuardTopAppBar
+import com.tele.k_guard.ui.theme.KGuardTheme
 import com.tele.k_guard.viewmodel.ScreenTimeViewModel
 
 @Composable
@@ -51,6 +53,25 @@ fun ScreenTimeScreen(
 ) {
     val config by viewModel.screenTimeConfig.collectAsState()
 
+    ScreenTimeContent(
+        config = config,
+        activeAgeProfile = activeAgeProfile,
+        onApplyAgeRecommendation = { viewModel.applyAgeRecommendation(activeAgeProfile) },
+        onUpdateDailyLimit = { viewModel.updateDailyLimit(it) },
+        onToggleSchoolTime = { viewModel.toggleSchoolTime(it) },
+        onNavigateBack = onNavigateBack
+    )
+}
+
+@Composable
+fun ScreenTimeContent(
+    config: ScreenTimeConfig,
+    activeAgeProfile: AgeProfile,
+    onApplyAgeRecommendation: () -> Unit,
+    onUpdateDailyLimit: (Int) -> Unit,
+    onToggleSchoolTime: (Boolean) -> Unit,
+    onNavigateBack: () -> Unit
+) {
     Scaffold(
         topBar = {
             KGuardTopAppBar(
@@ -160,7 +181,7 @@ fun ScreenTimeScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     OutlinedButton(
-                        onClick = { viewModel.applyAgeRecommendation(activeAgeProfile) },
+                        onClick = onApplyAgeRecommendation,
                         modifier = Modifier.align(Alignment.End)
                     ) {
                         Text("Apply Recommended Limit")
@@ -177,7 +198,7 @@ fun ScreenTimeScreen(
             )
             Slider(
                 value = config.dailyLimitMinutes.toFloat(),
-                onValueChange = { viewModel.updateDailyLimit(it.toInt()) },
+                onValueChange = { onUpdateDailyLimit(it.toInt()) },
                 valueRange = 15f..360f,
                 steps = 22
             )
@@ -227,10 +248,25 @@ fun ScreenTimeScreen(
                     }
                     Switch(
                         checked = config.schoolTimeEnabled,
-                        onCheckedChange = { viewModel.toggleSchoolTime(it) }
+                        onCheckedChange = onToggleSchoolTime
                     )
                 }
             }
         }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+fun ScreenTimeScreenPreview() {
+    KGuardTheme {
+        ScreenTimeContent(
+            config = ScreenTimeConfig(dailyLimitMinutes = 120, usedTodayMinutes = 45, schoolTimeEnabled = true),
+            activeAgeProfile = AgeProfile.PRETEENS_8_12,
+            onApplyAgeRecommendation = {},
+            onUpdateDailyLimit = {},
+            onToggleSchoolTime = {},
+            onNavigateBack = {}
+        )
     }
 }

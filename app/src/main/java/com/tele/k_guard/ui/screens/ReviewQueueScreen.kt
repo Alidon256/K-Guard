@@ -184,12 +184,12 @@ fun ReviewQueueScreenPreview() {
         id = "1",
         childName = "Alex",
         contentType = "text",
-        category = "bullying",
+        category = "cyberbullying",
         context = "Pre-Teens profile",
         decision = "WARN",
         explanation = "Contains mild teasing or insensitive language.",
         snippet = "Hey loser, you can't play with us",
-        isOpen = true
+        status = "open"
     )
     KGuardTheme {
         ReviewQueueContent(
@@ -201,3 +201,4 @@ fun ReviewQueueScreenPreview() {
         )
     }
 }
+
