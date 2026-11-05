@@ -119,7 +119,7 @@ fun AppNavigation(
         return
     }
 
-    val startDestination = com.tele.k_guard.DebugPreview.startRoute?.takeIf { signedIn } ?: if (signedIn) {
+    val startDestination = if (signedIn) {
         if (isChildDevice) {
             if (parentPinHash.isNullOrBlank()) Screen.ChildPinSetup.route else Screen.ChildDashboard.route
         } else {

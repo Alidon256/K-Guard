@@ -62,10 +62,8 @@ fun PrivacyScreen(session: SessionViewModel, onNavigateBack: () -> Unit) {
         busy = busy,
         userEmail = user?.email,
         formReady = familyId != null,
-        // Demo sessions have no Firebase user; exiting the demo replaces a real sign-out there.
-        demoMode = user == null,
         onSavePrivacy = { session.savePrivacy(it) },
-        onSignOut = { if (user == null) session.exitDemo() else session.signOut() },
+        onSignOut = { session.signOut() },
         onNavigateBack = onNavigateBack
     )
 }
@@ -76,7 +74,7 @@ fun PrivacyContent(
     busy: Boolean,
     userEmail: String?,
     formReady: Boolean = true,
-    demoMode: Boolean = false,
+    demoMode: Boolean = false, // TODO(A7): remove this param along with its usage
     onSavePrivacy: (FamilyPrivacy) -> Unit,
     onSignOut: () -> Unit,
     onNavigateBack: () -> Unit
@@ -185,7 +183,7 @@ fun PrivacyContent(
             Spacer(Modifier.height(24.dp)); HorizontalDivider(); Spacer(Modifier.height(12.dp))
             Text("Signed in as ${userEmail ?: "—"}", style = MaterialTheme.typography.bodySmall)
             OutlinedButton(onClick = onSignOut, modifier = Modifier.padding(top = 8.dp)) {
-                Text(if (demoMode) "Exit demo" else "Sign out")
+                Text("Sign out")
             }
         }
     }

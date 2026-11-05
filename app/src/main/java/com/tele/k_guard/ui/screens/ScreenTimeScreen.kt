@@ -112,10 +112,7 @@ fun ScreenTimeScreen(
     val selectedChildFromSession = session?.selectedChild?.collectAsState()?.value
     val familyId = session?.familyId?.collectAsState()?.value
 
-    val children = if (!childrenFromSession.isNullOrEmpty()) childrenFromSession else listOf(
-        ChildProfile(id = "c1", name = "Ama", ageProfile = AgeProfile.PRETEENS_8_12.id),
-        ChildProfile(id = "c2", name = "Kofi", ageProfile = AgeProfile.TEENS_13_17.id)
-    )
+    val children = childrenFromSession.orEmpty()
 
     // Sync family and selected child from session
     LaunchedEffect(familyId, selectedChildFromSession) {

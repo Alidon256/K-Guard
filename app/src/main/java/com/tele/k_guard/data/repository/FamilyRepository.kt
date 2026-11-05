@@ -38,18 +38,6 @@ object FamilyRepository {
         awaitClose { auth.removeAuthStateListener(listener) }
     }
 
-    suspend fun signIn(email: String, password: String) {
-        Log.d("KGuard", "FamilyRepository: signInWithEmailAndPassword")
-        auth.signInWithEmailAndPassword(email.trim(), password).await()
-        Log.d("KGuard", "FamilyRepository: signInWithEmailAndPassword success")
-    }
-
-    suspend fun signUp(email: String, password: String) {
-        Log.d("KGuard", "FamilyRepository: createUserWithEmailAndPassword")
-        auth.createUserWithEmailAndPassword(email.trim(), password).await()
-        Log.d("KGuard", "FamilyRepository: createUserWithEmailAndPassword success")
-    }
-
     suspend fun signInWithCredential(credential: AuthCredential) {
         Log.d("KGuard", "FamilyRepository: signInWithCredential")
         auth.signInWithCredential(credential).await()

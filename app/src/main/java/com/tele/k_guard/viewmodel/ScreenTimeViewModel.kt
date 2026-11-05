@@ -35,9 +35,9 @@ class ScreenTimeViewModel(
 
     private val scope: CoroutineScope get() = externalScope ?: viewModelScope
 
-    private val _familyId = MutableStateFlow<String>("demo")
-    private val _selectedChildId = MutableStateFlow<String>("c1")
-    private val _selectedChildName = MutableStateFlow<String>("Ama")
+    private val _familyId = MutableStateFlow<String?>(null)
+    private val _selectedChildId = MutableStateFlow("")
+    private val _selectedChildName = MutableStateFlow("")
 
     val selectedChildId: StateFlow<String> = _selectedChildId.asStateFlow()
     val selectedChildName: StateFlow<String> = _selectedChildName.asStateFlow()
@@ -48,7 +48,7 @@ class ScreenTimeViewModel(
     private var nextFeedbackId = 0L
 
     fun setFamilyAndChild(familyId: String?, childId: String, childName: String) {
-        _familyId.value = familyId ?: "demo"
+        _familyId.value = familyId
         _selectedChildId.value = childId
         _selectedChildName.value = childName
     }
@@ -57,14 +57,18 @@ class ScreenTimeViewModel(
         _familyId,
         _selectedChildId,
         _selectedChildName
-    ) { fid, cid, cname -> fid to Pair(cid, cname) }
-        .flatMapLatest { (fid, pair) ->
-            repository.deviceStream(fid, pair.first, pair.second)
+    ) { fid, cid, cname -> Triple(fid, cid, cname) }
+        .flatMapLatest { (fid, cid, cname) ->
+            // No family yet: an explicitly offline device, never fabricated telemetry.
+            if (fid == null) kotlinx.coroutines.flow.flowOf(
+                ChildDevice(childId = cid, childName = cname, deviceName = "No device yet", isOnline = false, batteryPercent = 0, networkName = "Not connected")
+            )
+            else repository.deviceStream(fid, cid, cname)
         }
         .stateIn(
             scope,
             SharingStarted.Eagerly,
-            ChildDevice(childId = "c1", childName = "Ama", deviceName = "Ama's Phone")
+            ChildDevice(childId = "", childName = "", deviceName = "No device yet", isOnline = false, batteryPercent = 0, networkName = "Not connected")
         )
 
     val commandHistory: StateFlow<List<RemoteCommand>> = kotlinx.coroutines.flow.combine(
@@ -72,7 +76,7 @@ class ScreenTimeViewModel(
         _selectedChildId
     ) { fid, cid -> fid to cid }
         .flatMapLatest { (fid, cid) ->
-            repository.commandsStream(fid, cid)
+            if (fid == null) kotlinx.coroutines.flow.flowOf(emptyList()) else repository.commandsStream(fid, cid)
         }
         .stateIn(
             scope,
@@ -89,9 +93,15 @@ class ScreenTimeViewModel(
         _actionFeedback.value = ScreenTimeFeedback(nextFeedbackId++, message)
     }
 
+    /** Remote commands need a real family; without one we say so instead of silently failing. */
+    private fun requireFamilyId(): String? =
+        _familyId.value.also {
+            if (it == null) showFeedback("Connect the child's device first — its family is not ready yet.")
+        }
+
     fun remoteSwitchOff(childId: String, reason: String) {
         val cname = _selectedChildName.value
-        val fid = _familyId.value
+        val fid = requireFamilyId() ?: return
         scope.launch {
             try {
                 repository.sendRemoteCommand(
@@ -113,7 +123,7 @@ class ScreenTimeViewModel(
 
     fun remoteUnlock(childId: String) {
         val cname = _selectedChildName.value
-        val fid = _familyId.value
+        val fid = requireFamilyId() ?: return
         scope.launch {
             try {
                 repository.sendRemoteCommand(
@@ -134,7 +144,7 @@ class ScreenTimeViewModel(
 
     fun remoteSoundAlarm(childId: String) {
         val cname = _selectedChildName.value
-        val fid = _familyId.value
+        val fid = requireFamilyId() ?: return
         scope.launch {
             try {
                 repository.sendRemoteCommand(
@@ -153,7 +163,7 @@ class ScreenTimeViewModel(
 
     fun addBonusTime(childId: String, bonusMinutes: Int) {
         val cname = _selectedChildName.value
-        val fid = _familyId.value
+        val fid = requireFamilyId() ?: return
         scope.launch {
             try {
                 // No client-side newLimit: the repository applies an atomic FieldValue.increment,
@@ -175,7 +185,7 @@ class ScreenTimeViewModel(
 
     fun updateDailyLimit(childId: String, minutes: Int, feedbackMessage: String? = null) {
         val cname = _selectedChildName.value
-        val fid = _familyId.value
+        val fid = requireFamilyId() ?: return
         scope.launch {
             try {
                 repository.sendRemoteCommand(
@@ -206,7 +216,7 @@ class ScreenTimeViewModel(
 
     fun updateBedtimeSchedule(childId: String, start: String, end: String, enabled: Boolean) {
         val cname = _selectedChildName.value
-        val fid = _familyId.value
+        val fid = requireFamilyId() ?: return
         scope.launch {
             try {
                 repository.sendRemoteCommand(
@@ -226,7 +236,7 @@ class ScreenTimeViewModel(
 
     fun updateSchoolSchedule(childId: String, start: String, end: String, enabled: Boolean) {
         val cname = _selectedChildName.value
-        val fid = _familyId.value
+        val fid = requireFamilyId() ?: return
         scope.launch {
             try {
                 repository.sendRemoteCommand(

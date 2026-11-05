@@ -21,7 +21,7 @@ class AppManagementViewModel(
     private val repository: ParentalControlsRepository = ParentalControlsRepository
 ) : ViewModel() {
 
-    private val _familyId = MutableStateFlow<String?>("demo")
+    private val _familyId = MutableStateFlow<String?>(null)
     val familyId: StateFlow<String?> = _familyId.asStateFlow()
 
     private val _childId = MutableStateFlow<String?>(null)
@@ -39,8 +39,9 @@ class AppManagementViewModel(
     val managedApps: StateFlow<List<AppAccessInfo>> = combine(_familyId, _childId) { fid, cid ->
         fid to cid
     }.flatMapLatest { (fid, cid) ->
-        val currentFid = fid ?: "demo"
-        repository.appsStream(currentFid, cid).catch { e ->
+        // No family yet: an honest empty list, never fabricated data.
+        if (fid == null) kotlinx.coroutines.flow.flowOf(emptyList())
+        else repository.appsStream(fid, cid).catch { e ->
             _error.value = e.localizedMessage
             emit(emptyList())
         }
@@ -56,8 +57,14 @@ class AppManagementViewModel(
     fun clearError() { _error.value = null }
     fun clearMessage() { _message.value = null }
 
+    /** Resolves the family id from an explicit override or stored state; errors the UI when absent. */
+    private fun requireFamilyId(explicit: String? = null): String? =
+        (explicit ?: _familyId.value).also {
+            if (it == null) _error.value = "Your family is not ready yet. Please try again in a moment."
+        }
+
     fun approveApp(familyId: String? = null, appId: String) {
-        val fid = familyId ?: _familyId.value ?: "demo"
+        val fid = requireFamilyId(familyId) ?: return
         viewModelScope.launch {
             _busy.value = true
             _error.value = null
@@ -73,7 +80,7 @@ class AppManagementViewModel(
     }
 
     fun rejectApp(familyId: String? = null, appId: String) {
-        val fid = familyId ?: _familyId.value ?: "demo"
+        val fid = requireFamilyId(familyId) ?: return
         viewModelScope.launch {
             _busy.value = true
             _error.value = null
@@ -89,7 +96,7 @@ class AppManagementViewModel(
     }
 
     fun updateAppLimit(familyId: String? = null, appId: String, limitMinutes: Int) {
-        val fid = familyId ?: _familyId.value ?: "demo"
+        val fid = requireFamilyId(familyId) ?: return
         viewModelScope.launch {
             try {
                 repository.updateAppLimit(fid, appId, limitMinutes)
@@ -110,7 +117,7 @@ class AppManagementViewModel(
         dailyLimitMinutes: Int = 30,
         onSuccess: () -> Unit = {}
     ) {
-        val fid = familyId ?: _familyId.value ?: "demo"
+        val fid = requireFamilyId(familyId) ?: return
         viewModelScope.launch {
             _busy.value = true
             _error.value = null

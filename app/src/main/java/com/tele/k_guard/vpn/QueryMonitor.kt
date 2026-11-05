@@ -5,7 +5,6 @@ import android.content.SharedPreferences
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import com.tele.k_guard.DebugPreview
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.text.SimpleDateFormat
@@ -67,7 +66,7 @@ object QueryMonitor {
         val app = context.applicationContext
         prefs = app.getSharedPreferences("dns_stats", Context.MODE_PRIVATE)
         handler = Handler(Looper.getMainLooper())
-        debug = DebugPreview.isDebuggable(app)
+        debug = (app.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
         dayKey = currentKey()
         _today.value = DayCounts.decode(prefs?.getString(dayKey, null))
     }

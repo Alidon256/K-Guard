@@ -97,7 +97,7 @@ fun WebProtectionContent(
     events: List<SafetyEvent>,
     onNavigateBack: () -> Unit
 ) {
-    var tab by remember { mutableIntStateOf(runCatching { com.tele.k_guard.DebugPreview.webTab }.getOrDefault(0)) }
+    var tab by remember { mutableIntStateOf(0) }
     val openWeb = events.count { it.contentType == "web" && it.isOpen }
     val context = LocalContext.current
     // One shared filter for the whole screen, reloaded when the configuration it explains changes.
