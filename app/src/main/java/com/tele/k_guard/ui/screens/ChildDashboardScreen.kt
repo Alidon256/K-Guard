@@ -13,15 +13,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Timer
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -31,15 +28,26 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.tele.k_guard.data.model.ChildProfile
-import com.tele.k_guard.ui.components.KGuardTopAppBar
-import com.tele.k_guard.ui.theme.KGuardTheme
+import com.tele.k_guard.ui.components.KGCard
+import com.tele.k_guard.ui.components.KGSectionHeader
 import com.tele.k_guard.ui.components.KGuardLogo
+import com.tele.k_guard.ui.components.KGuardTopAppBar
+import com.tele.k_guard.ui.theme.KGColors
+import com.tele.k_guard.ui.theme.KGShapes
+import com.tele.k_guard.ui.theme.KGuardTheme
 
+/**
+ * The child's own view of K-Guard: friendly, calm, legible. One gradient spotlight hero carries
+ * the promise ("You're protected"); every protection fact below sits on a kit card with a 40dp
+ * signal-tinted icon circle. Content is static by design — no live data is invented here.
+ */
 @Composable
 fun ChildDashboardScreen(
     childProfile: ChildProfile?,
@@ -69,132 +77,108 @@ fun ChildDashboardScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Protected Status Banner
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(20.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                KGuardLogo(modifier = Modifier.size(48.dp))
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Column {
-                        Text(
-                            text = childProfile?.let { "Protected Device (${it.name})" } ?: "Protected Child Device",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
+            // Hero: the single gradient spotlight card on this screen.
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(KGShapes.spotlight)
+                    .background(
+                        Brush.linearGradient(
+                            listOf(KGColors.gradientViolet, KGColors.accent)
                         )
-                        Text(
-                            text = "VPN Firewall & AI Safety active",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
-                        )
-                    }
-                }
-            }
-
-            // Screen Time Today Card
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                elevation = CardDefaults.cardElevation(2.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Color(0xFF1E88E5).copy(alpha = 0.15f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Timer,
-                            contentDescription = null,
-                            tint = Color(0xFF1E88E5)
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(14.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Screen Time Today",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "Screen-time limits set by your parent apply to this device.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-
-            // App Access & Firewall Card
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                elevation = CardDefaults.cardElevation(2.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Color(0xFF8E24AA).copy(alpha = 0.15f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Apps,
-                            contentDescription = null,
-                            tint = Color(0xFF8E24AA)
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(14.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "App Access & Web Firewall",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "Your parent's protection rules block harmful sites and apps on this device.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-
-            // Uninstall Protection Notice
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "🔒 Uninstall Protection Active",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
+                    .padding(24.dp)
+            ) {
+                KGuardLogo(modifier = Modifier.size(56.dp))
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = childProfile?.let { "You're protected, ${it.name}" }
+                        ?: "You're protected",
+                    style = MaterialTheme.typography.displaySmall,
+                    color = Color.White
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "This phone is watched over by K-Guard.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White.copy(alpha = 0.75f)
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Box(
+                    modifier = Modifier
+                        .clip(KGShapes.pill)
+                        .background(Color.White.copy(alpha = 0.16f))
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                ) {
                     Text(
-                        text = "This device is supervised by K-Guard. A security PIN is required to uninstall or disable protection.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = "VPN firewall & AI safety active",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White
                     )
                 }
+            }
+
+            KGSectionHeader(
+                title = "Protection on this phone",
+                hint = "What K-Guard does for you every day"
+            )
+
+            ProtectionFactCard(
+                icon = Icons.Default.Timer,
+                tint = KGColors.accent,
+                title = "Screen Time Today",
+                description = "Screen-time limits set by your parent apply to this device."
+            )
+            ProtectionFactCard(
+                icon = Icons.Default.Apps,
+                tint = KGColors.warning,
+                title = "App Access & Web Firewall",
+                description = "Your parent's protection rules block harmful sites and apps on this device."
+            )
+            ProtectionFactCard(
+                icon = Icons.Default.Lock,
+                tint = KGColors.success,
+                title = "Uninstall Protection Active",
+                description = "This device is supervised by K-Guard. A security PIN is required to uninstall or disable protection."
+            )
+        }
+    }
+}
+
+/** One protection fact: kit card, 40dp signal-tinted icon circle, calm two-line copy. */
+@Composable
+private fun ProtectionFactCard(
+    icon: ImageVector,
+    tint: Color,
+    title: String,
+    description: String
+) {
+    KGCard(modifier = Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(KGShapes.circle)
+                    .background(tint.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = tint,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleSmall)
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }

@@ -13,17 +13,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -36,13 +30,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.tele.k_guard.data.model.FamilyPrivacy
 import com.tele.k_guard.data.model.QuietHours
+import com.tele.k_guard.ui.components.KGCard
+import com.tele.k_guard.ui.components.KGDangerButton
+import com.tele.k_guard.ui.components.KGPrimaryButton
+import com.tele.k_guard.ui.components.KGSecondaryButton
+import com.tele.k_guard.ui.components.KGSectionHeader
+import com.tele.k_guard.ui.components.KGTextField
+import com.tele.k_guard.ui.components.KGToggleRow
 import com.tele.k_guard.ui.components.KGuardTopAppBar
 import com.tele.k_guard.ui.components.RequestPermission
+import com.tele.k_guard.ui.theme.KGColors
 import com.tele.k_guard.ui.theme.KGuardTheme
 import com.tele.k_guard.viewmodel.SessionViewModel
 import java.util.TimeZone
@@ -74,7 +75,6 @@ fun PrivacyContent(
     busy: Boolean,
     userEmail: String?,
     formReady: Boolean = true,
-    demoMode: Boolean = false, // TODO(A7): remove this param along with its usage
     onSavePrivacy: (FamilyPrivacy) -> Unit,
     onSignOut: () -> Unit,
     onNavigateBack: () -> Unit
@@ -111,7 +111,7 @@ fun PrivacyContent(
 
     Scaffold(topBar = { KGuardTopAppBar("Privacy & Notifications", canNavigateBack = true, onNavigateBack = onNavigateBack) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState())) {
-            Section("Which alerts should notify you?")
+            KGSectionHeader("Which alerts should notify you?")
             listOf(
                 FamilyPrivacy.NOTIFY_ALL to "Everything flagged (including Warn)",
                 FamilyPrivacy.NOTIFY_WARN_AND_ABOVE to "Warn, Blur, Block and Review",
@@ -123,7 +123,11 @@ fun PrivacyContent(
                 ) { RadioButton(selected = notifyOn == id, onClick = null); Spacer(Modifier.width(8.dp)); Text(label) }
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                OutlinedButton(onClick = requestNotifications) { Text("Allow notifications on this phone") }
+                KGSecondaryButton(
+                    text = "Allow notifications on this phone",
+                    onClick = requestNotifications,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
                 if (notificationsDeclined) {
                     Text(
                         "Notifications were declined. You can enable them later in your phone's settings for K-Guard.",
@@ -134,41 +138,54 @@ fun PrivacyContent(
                 }
             }
 
-            Spacer(Modifier.height(12.dp)); HorizontalDivider(); Spacer(Modifier.height(12.dp))
-
-            Section("Quiet hours")
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Hold non-blocking alerts during quiet hours. Blocked content always notifies.", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                Switch(checked = quiet, onCheckedChange = { quiet = it })
+            KGSectionHeader("Quiet hours")
+            KGCard(Modifier.fillMaxWidth()) {
+                KGToggleRow(
+                    title = "Hold non-blocking alerts",
+                    description = "Blocked content always notifies.",
+                    checked = quiet,
+                    onCheckedChange = { quiet = it }
+                )
+                if (quiet) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                        KGTextField(
+                            value = qStart,
+                            onValueChange = { qStart = it.take(5) },
+                            label = "From (HH:mm)",
+                            modifier = Modifier.weight(1f),
+                            isError = !TIME.matches(qStart),
+                            supportingText = if (TIME.matches(qStart)) null else "Use HH:mm, 24-hour (e.g. 21:00)"
+                        )
+                        KGTextField(
+                            value = qEnd,
+                            onValueChange = { qEnd = it.take(5) },
+                            label = "Until (HH:mm)",
+                            modifier = Modifier.weight(1f),
+                            isError = !TIME.matches(qEnd),
+                            supportingText = if (TIME.matches(qEnd)) null else "Use HH:mm, 24-hour (e.g. 07:00)"
+                        )
+                    }
+                }
             }
-            if (quiet) {
+
+            KGSectionHeader("What K-Guard keeps")
+            KGCard(Modifier.fillMaxWidth()) {
+                KGToggleRow(
+                    title = "Store a short text excerpt with each alert",
+                    description = "Off by default. When off, alerts record the category and explanation but not the content itself, and uploaded images are deleted right after checking.",
+                    checked = includeSnippet,
+                    onCheckedChange = { includeSnippet = it }
+                )
+                Spacer(Modifier.height(8.dp))
+                Text("Delete alerts after", style = MaterialTheme.typography.titleSmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
-                    OutlinedTextField(qStart, { qStart = it.take(5) }, label = { Text("From (HH:mm)") }, singleLine = true, modifier = Modifier.weight(1f), isError = !TIME.matches(qStart), shape = RoundedCornerShape(12.dp))
-                    OutlinedTextField(qEnd, { qEnd = it.take(5) }, label = { Text("Until (HH:mm)") }, singleLine = true, modifier = Modifier.weight(1f), isError = !TIME.matches(qEnd), shape = RoundedCornerShape(12.dp))
+                    listOf(7, 30, 90).forEach { d -> FilterChip(selected = retainDays == d, onClick = { retainDays = d }, label = { Text("$d days") }) }
                 }
-            }
-
-            Spacer(Modifier.height(12.dp)); HorizontalDivider(); Spacer(Modifier.height(12.dp))
-
-            Section("What K-Guard keeps")
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Store a short text excerpt with each alert", fontWeight = FontWeight.SemiBold)
-                    Text(
-                        "Off by default. When off, alerts record the category and explanation but not the content itself, and uploaded images are deleted right after checking.",
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(checked = includeSnippet, onCheckedChange = { includeSnippet = it })
-            }
-            Spacer(Modifier.height(8.dp))
-            Text("Delete alerts after", fontWeight = FontWeight.SemiBold)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(7, 30, 90).forEach { d -> FilterChip(selected = retainDays == d, onClick = { retainDays = d }, label = { Text("$d days") }) }
             }
 
             Spacer(Modifier.height(20.dp))
-            Button(
+            KGPrimaryButton(
+                text = if (busy) "Saving…" else "Save settings",
                 onClick = {
                     onSavePrivacy(
                         FamilyPrivacy(
@@ -177,21 +194,23 @@ fun PrivacyContent(
                         )
                     )
                 },
-                enabled = timesOk && !busy, modifier = Modifier.fillMaxWidth()
-            ) { Text(if (busy) "Saving…" else "Save settings") }
+                enabled = timesOk && !busy,
+                modifier = Modifier.fillMaxWidth()
+            )
 
-            Spacer(Modifier.height(24.dp)); HorizontalDivider(); Spacer(Modifier.height(12.dp))
-            Text("Signed in as ${userEmail ?: "—"}", style = MaterialTheme.typography.bodySmall)
-            OutlinedButton(onClick = onSignOut, modifier = Modifier.padding(top = 8.dp)) {
-                Text("Sign out")
-            }
+            Spacer(Modifier.height(24.dp))
+            Text(
+                "Signed in as ${userEmail ?: "—"}",
+                style = MaterialTheme.typography.bodySmall,
+                color = KGColors.inkMuted
+            )
+            KGDangerButton(
+                text = "Sign out",
+                onClick = onSignOut,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+            )
         }
     }
-}
-
-@Composable
-private fun Section(text: String) {
-    Text(text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 6.dp))
 }
 
 @Preview(showBackground = true)

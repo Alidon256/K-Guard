@@ -10,6 +10,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,30 +23,20 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddPhotoAlternate
-import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -58,12 +49,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
@@ -72,7 +64,18 @@ import com.tele.k_guard.data.model.CategoryRule
 import com.tele.k_guard.data.model.ChildProfile
 import com.tele.k_guard.data.model.SafetyCategory
 import com.tele.k_guard.service.KGuardMessagingService
+import com.tele.k_guard.ui.components.KGCard
+import com.tele.k_guard.ui.components.KGDangerButton
+import com.tele.k_guard.ui.components.KGEmptyState
+import com.tele.k_guard.ui.components.KGPrimaryButton
+import com.tele.k_guard.ui.components.KGSecondaryButton
+import com.tele.k_guard.ui.components.KGSectionHeader
+import com.tele.k_guard.ui.components.KGStatusTag
+import com.tele.k_guard.ui.components.KGTextField
+import com.tele.k_guard.ui.components.KGToggleRow
 import com.tele.k_guard.ui.components.KGuardTopAppBar
+import com.tele.k_guard.ui.theme.KGColors
+import com.tele.k_guard.ui.theme.KGShapes
 import com.tele.k_guard.ui.theme.KGuardTheme
 import com.tele.k_guard.viewmodel.SessionViewModel
 import kotlinx.coroutines.Dispatchers
@@ -123,78 +126,96 @@ fun ChildrenContent(
     ) { padding ->
         when {
             children.isEmpty() -> Column(
-                Modifier.fillMaxSize().padding(padding).padding(24.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally
+                Modifier.fillMaxSize().padding(padding),
+                verticalArrangement = Arrangement.Center
             ) {
-                Text("No child profiles yet", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "Add a child to set their age group and choose which categories K-Guard should block, blur or warn about.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                KGEmptyState(
+                    icon = Icons.Default.Person,
+                    title = "No child profiles yet",
+                    description = "Add a child to set their age group and choose which categories " +
+                        "K-Guard should block, blur or warn about.",
+                    action = { KGPrimaryButton("Add a child", onClick = { onEditChild(null) }) }
                 )
             }
 
             else -> LazyColumn(
                 Modifier.fillMaxSize().padding(padding),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp, 16.dp, 16.dp, 96.dp),
+                contentPadding = PaddingValues(16.dp, 16.dp, 16.dp, 96.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(children, key = { it.id }) { child ->
                     val isSelected = child.id == selected?.id
-                    Card(
-                        modifier = Modifier.fillMaxWidth().clickable { onSelectChild(child.id) },
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer
-                            else MaterialTheme.colorScheme.surface
-                        ),
-                        elevation = CardDefaults.cardElevation(2.dp)
-                    ) {
-                        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                            if (child.photoUrl.isNotBlank()) {
-                                AsyncImage(
-                                    model = child.photoUrl,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(44.dp).clip(CircleShape),
-                                    contentScale = ContentScale.Crop
-                                )
-                            } else {
-                                Box(
-                                    modifier = Modifier
-                                        .size(44.dp)
-                                        .clip(CircleShape)
-                                        .background(MaterialTheme.colorScheme.primaryContainer),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(Icons.Default.Person, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                                }
-                            }
-                            Spacer(Modifier.width(12.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(child.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                                Text(
-                                    "${child.age.title} · ${child.age.ageRange}" +
-                                        if (child.email.isNotBlank()) " · ${child.email}" else "",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                if (isSelected) Text(
-                                    "Active in checkers",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            TextButton(onClick = { onEditChild(child.id) }) {
-                                Text("Edit")
-                                Icon(Icons.Default.ChevronRight, contentDescription = null)
-                            }
+                    ChildRowCard(
+                        child = child,
+                        isSelected = isSelected,
+                        onClick = {
+                            // Selecting the child keeps it active in the checkers; the row then
+                            // opens its editor, replacing the old separate Edit affordance.
+                            onSelectChild(child.id)
+                            onEditChild(child.id)
                         }
-                    }
+                    )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ChildRowCard(
+    child: ChildProfile,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    KGCard(modifier = Modifier.fillMaxWidth(), onClick = onClick) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            ChildAvatar(child = child, size = 48.dp)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(child.name, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "${child.age.title} · ${child.age.ageRange}" +
+                        if (child.email.isNotBlank()) " · ${child.email}" else "",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = KGColors.inkMuted
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (isSelected) KGStatusTag("Active", KGColors.info)
+                if (child.linkedUid != null) {
+                    KGStatusTag("Paired", KGColors.success)
+                } else {
+                    KGStatusTag("Not linked", KGColors.warning)
+                }
+            }
+        }
+    }
+}
+
+/** Circular child photo: the picked image when present, otherwise the initial letter on a surface disc. */
+@Composable
+private fun ChildAvatar(child: ChildProfile, size: androidx.compose.ui.unit.Dp) {
+    if (child.photoUrl.isNotBlank()) {
+        AsyncImage(
+            model = child.photoUrl,
+            contentDescription = null,
+            modifier = Modifier.size(size).clip(KGShapes.circle),
+            contentScale = ContentScale.Crop
+        )
+    } else {
+        Box(
+            modifier = Modifier
+                .size(size)
+                .clip(KGShapes.circle)
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                child.name.firstOrNull()?.uppercase() ?: "•",
+                style = if (size >= 96.dp) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.titleLarge,
+                color = KGColors.inkMuted
+            )
         }
     }
 }
@@ -270,6 +291,7 @@ fun ChildEditorContent(
     var allowReveal by remember(existing?.id) { mutableStateOf(existing?.allowReveal ?: false) }
     var confirmDelete by remember { mutableStateOf(false) }
     val age = AgeProfile.fromId(ageId)
+    val revealAllowed = age == AgeProfile.TEENS_13_17 || age == AgeProfile.ADULTS_18_PLUS
 
     val imagePicker = rememberLauncherFilePicker { uri ->
         if (uri != null) {
@@ -291,103 +313,114 @@ fun ChildEditorContent(
         }
     ) { padding ->
         Column(
-            Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState()),
-            horizontalAlignment = Alignment.CenterHorizontally
+            Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())
         ) {
-            // Child Photo Picker Avatar
-            Box(
-                modifier = Modifier
-                    .size(96.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primaryContainer)
-                    .clickable { imagePicker.launch("image/*") },
-                contentAlignment = Alignment.Center
-            ) {
-                if (photoUrl.isNotBlank()) {
-                    AsyncImage(
-                        model = photoUrl,
-                        contentDescription = "Child Avatar",
-                        modifier = Modifier.fillMaxSize().clip(CircleShape),
-                        contentScale = ContentScale.Crop
-                    )
-                } else {
-                    Icon(
-                        imageVector = Icons.Default.AddPhotoAlternate,
-                        contentDescription = "Pick Photo",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(36.dp)
-                    )
-                }
-            }
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = "Tap to pick photo from device",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Spacer(Modifier.height(16.dp))
-
-            Column(modifier = Modifier.fillMaxWidth()) {
-                OutlinedTextField(
-                    value = name, onValueChange = { name = it.take(40) }, label = { Text("Child's name") },
-                    singleLine = true, modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
-                )
-
-                Spacer(Modifier.height(12.dp))
-
-                OutlinedTextField(
-                    value = email, onValueChange = { email = it.trim() }, label = { Text("Child's Google Email") },
-                    singleLine = true, modifier = Modifier.fillMaxWidth(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                    shape = RoundedCornerShape(12.dp)
-                )
-
-                if (existing != null) {
-                    Spacer(Modifier.height(12.dp))
-                    OutlinedButton(
-                        onClick = { onGenerateCode(existing.id) },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Icon(Icons.Default.QrCode, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Generate Device Pairing OTP Code")
+            // -------------------------------------------------------------- Photo
+            KGSectionHeader("Photo", hint = "A face your child recognises. Optional.")
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Box(
+                    modifier = Modifier
+                        .size(96.dp)
+                        .clip(KGShapes.circle)
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .clickable { imagePicker.launch("image/*") },
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (photoUrl.isNotBlank()) {
+                        AsyncImage(
+                            model = photoUrl,
+                            contentDescription = "Child Avatar",
+                            modifier = Modifier.fillMaxSize().clip(KGShapes.circle),
+                            contentScale = ContentScale.Crop
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.AddPhotoAlternate,
+                            contentDescription = "Pick Photo",
+                            tint = KGColors.inkMuted,
+                            modifier = Modifier.size(36.dp)
+                        )
                     }
                 }
+            }
+            Text(
+                "Tap to pick photo from device",
+                style = MaterialTheme.typography.bodySmall,
+                color = KGColors.inkMuted,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+            )
 
-                Spacer(Modifier.height(16.dp))
-                Text("Age group", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            // -------------------------------------------------------------- Name
+            KGSectionHeader("Name", hint = "How this child appears across K-Guard.")
+            KGTextField(
+                value = name,
+                onValueChange = { name = it.take(40) },
+                label = "Child's name",
+                isError = name.isBlank()
+            )
+            Spacer(Modifier.height(12.dp))
+            KGTextField(
+                value = email,
+                onValueChange = { email = it.trim() },
+                label = "Child's Google Email",
+                keyboardType = KeyboardType.Email,
+                supportingText = "Used when pairing your child's Google account."
+            )
+
+            // -------------------------------------------------------------- Age group
+            KGSectionHeader("Age group", hint = "Sets the default protection level for every category below.")
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 AgeProfile.entries.forEach { p ->
+                    val isChosen = p.id == ageId
                     Row(
-                        Modifier.fillMaxWidth().selectable(selected = p.id == ageId, role = Role.RadioButton) { ageId = p.id }
-                            .padding(vertical = 4.dp),
+                        Modifier
+                            .fillMaxWidth()
+                            .background(
+                                if (isChosen) MaterialTheme.colorScheme.surfaceContainerHigh
+                                else MaterialTheme.colorScheme.surfaceContainerLow,
+                                KGShapes.cardSmall
+                            )
+                            .selectable(selected = isChosen, role = Role.RadioButton) { ageId = p.id }
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        RadioButton(selected = p.id == ageId, onClick = null)
+                        RadioButton(selected = isChosen, onClick = null)
                         Spacer(Modifier.width(8.dp))
                         Column {
-                            Text("${p.title} (${p.ageRange})", fontWeight = FontWeight.SemiBold)
-                            Text(p.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("${p.title} (${p.ageRange})", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                p.description,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = KGColors.inkMuted
+                            )
                         }
                     }
                 }
+            }
 
-                Spacer(Modifier.height(16.dp))
-                Text("What should K-Guard do about each category?", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Text(
-                    "\"Default\" follows the age group. Rules can make K-Guard stricter. They can relax it only for lower-risk categories and moderate scores. " +
-                        "Sexual content, threats and self-harm are always handled strictly.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(8.dp))
+            // -------------------------------------------------------------- Web categories
+            KGSectionHeader(
+                "Web categories",
+                hint = "Per-category overrides. \"Default\" follows the age group; rules can make " +
+                    "K-Guard stricter. They can relax it only for lower-risk categories and moderate " +
+                    "scores. Sexual content, threats and self-harm are always handled strictly."
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 SafetyCategory.entries.forEach { cat ->
-                    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-                        Text(cat.label, fontWeight = FontWeight.SemiBold)
-                        Text(cat.hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    KGCard(Modifier.fillMaxWidth()) {
+                        Text(cat.label, style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            cat.hint,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = KGColors.inkMuted,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        Row(
+                            Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             val current = CategoryRule.fromId(rules[cat.id])
                             FilterChip(
                                 selected = current == null,
@@ -406,52 +439,89 @@ fun ChildEditorContent(
                         }
                     }
                 }
+            }
 
-                Spacer(Modifier.height(12.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Allow tap-to-reveal on blurred items", fontWeight = FontWeight.SemiBold)
-                        Text(
-                            if (age == AgeProfile.KIDS_3_7 || age == AgeProfile.PRETEENS_8_12)
-                                "Not available for this age group; blurred items stay hidden."
-                            else "Lets this child choose to view blurred items.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+            // -------------------------------------------------------------- Reveal permission
+            KGSectionHeader("Revealing blurred content")
+            KGToggleRow(
+                title = "Allow tap-to-reveal on blurred items",
+                description = if (!revealAllowed)
+                    "Not available for this age group; blurred items stay hidden."
+                else "Lets this child choose to view blurred items.",
+                checked = allowReveal && revealAllowed,
+                onCheckedChange = { if (revealAllowed) allowReveal = it },
+                modifier = Modifier.fillMaxWidth().alpha(if (revealAllowed) 1f else 0.6f)
+            )
+
+            // -------------------------------------------------------------- Device linking
+            KGSectionHeader("Device linking", hint = "Pair your child's phone so K-Guard protects it directly.")
+            if (existing != null) {
+                KGCard(Modifier.fillMaxWidth()) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Link status", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                if (existing.linkedUid != null)
+                                    "A device is paired with this child's Google account."
+                                else
+                                    "No device is paired yet. Generate a code and enter it on your child's phone.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = KGColors.inkMuted
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        if (existing.linkedUid != null) {
+                            KGStatusTag("Paired", KGColors.success)
+                        } else {
+                            KGStatusTag("Not linked", KGColors.warning)
+                        }
                     }
-                    Switch(
-                        checked = allowReveal && age != AgeProfile.KIDS_3_7 && age != AgeProfile.PRETEENS_8_12,
-                        onCheckedChange = { allowReveal = it },
-                        enabled = age == AgeProfile.TEENS_13_17 || age == AgeProfile.ADULTS_18_PLUS
+                    Spacer(Modifier.height(12.dp))
+                    KGSecondaryButton(
+                        text = "Generate pairing code",
+                        onClick = { onGenerateCode(existing.id) },
+                        leading = { Icon(Icons.Default.QrCode, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
-
-                error?.let {
-                    Spacer(Modifier.height(8.dp))
-                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            } else {
+                KGCard(Modifier.fillMaxWidth()) {
+                    Text(
+                        "Save the profile first — pairing codes are generated once the child exists.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = KGColors.inkMuted
+                    )
                 }
-
-                Spacer(Modifier.height(16.dp))
-                Button(
-                    onClick = {
-                        onSaveChild(
-                            (existing ?: ChildProfile()).copy(
-                                name = name, email = email, photoUrl = photoUrl, ageProfile = ageId, categoryRules = rules,
-                                allowReveal = allowReveal && (age == AgeProfile.TEENS_13_17 || age == AgeProfile.ADULTS_18_PLUS)
-                            )
-                        )
-                    },
-                    enabled = name.isNotBlank() && !busy,
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text(if (busy) "Saving…" else "Save") }
-
-                if (existing != null) {
-                    OutlinedButton(onClick = { confirmDelete = true }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                        Text("Delete profile", color = MaterialTheme.colorScheme.error)
-                    }
-                }
-                Spacer(Modifier.height(24.dp))
             }
+
+            error?.let {
+                Spacer(Modifier.height(8.dp))
+                Text(it, color = KGColors.danger, style = MaterialTheme.typography.bodySmall)
+            }
+
+            Spacer(Modifier.height(16.dp))
+            KGPrimaryButton(
+                text = if (busy) "Saving…" else "Save",
+                onClick = {
+                    onSaveChild(
+                        (existing ?: ChildProfile()).copy(
+                            name = name, email = email, photoUrl = photoUrl, ageProfile = ageId, categoryRules = rules,
+                            allowReveal = allowReveal && (age == AgeProfile.TEENS_13_17 || age == AgeProfile.ADULTS_18_PLUS)
+                        )
+                    )
+                },
+                enabled = name.isNotBlank() && !busy,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            if (existing != null) {
+                KGDangerButton(
+                    text = "Delete profile",
+                    onClick = { confirmDelete = true },
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                )
+            }
+            Spacer(Modifier.height(24.dp))
         }
     }
 
@@ -469,11 +539,25 @@ fun ChildEditorContent(
             title = { Text("6-Digit Device Pairing OTP") },
             text = {
                 Column {
-                    Text("Enter this code on your child's phone during setup to pair their device:")
+                    Text(
+                        "Enter this code on your child's phone during setup to pair their device:",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
                     Spacer(Modifier.height(12.dp))
-                    Text(code, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.height(4.dp))
-                    Text("This code expires in 15 minutes.", style = MaterialTheme.typography.bodySmall)
+                    KGCard(Modifier.fillMaxWidth()) {
+                        Text(
+                            code,
+                            style = MaterialTheme.typography.displaySmall,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "This code expires in 15 minutes.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = KGColors.inkMuted
+                    )
                 }
             },
             confirmButton = { TextButton(onClick = onClearCode) { Text("Done") } }

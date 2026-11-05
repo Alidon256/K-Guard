@@ -1,9 +1,7 @@
 package com.tele.k_guard.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,37 +17,25 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -62,8 +48,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -71,7 +55,17 @@ import com.tele.k_guard.data.model.AgeProfile
 import com.tele.k_guard.data.model.AppAccessInfo
 import com.tele.k_guard.data.model.AppApprovalStatus
 import com.tele.k_guard.data.model.ChildProfile
+import com.tele.k_guard.ui.components.KGDangerButton
+import com.tele.k_guard.ui.components.KGEmptyState
+import com.tele.k_guard.ui.components.KGPrimaryButton
+import com.tele.k_guard.ui.components.KGSecondaryButton
+import com.tele.k_guard.ui.components.KGStatusTag
+import com.tele.k_guard.ui.components.KGTextField
+import com.tele.k_guard.ui.components.KGTextLink
+import com.tele.k_guard.ui.components.KGCard
 import com.tele.k_guard.ui.components.KGuardTopAppBar
+import com.tele.k_guard.ui.theme.KGColors
+import com.tele.k_guard.ui.theme.KGShapes
 import com.tele.k_guard.ui.theme.KGuardTheme
 import com.tele.k_guard.viewmodel.AppManagementViewModel
 
@@ -113,6 +107,14 @@ fun AppManagementScreen(
         onNavigateToAppDetail = onNavigateToAppDetail,
         onNavigateBack = onNavigateBack
     )
+}
+
+/** Safety-score tier colour: >=80 success, 50–79 warning, <50 danger. */
+@Composable
+private fun safetyScoreColor(score: Int): androidx.compose.ui.graphics.Color = when {
+    score >= 80 -> KGColors.success
+    score >= 50 -> KGColors.warning
+    else -> KGColors.danger
 }
 
 @Composable
@@ -178,9 +180,9 @@ fun AppManagementContent(
             ExtendedFloatingActionButton(
                 onClick = { showRequestDialog = true },
                 icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                text = { Text("Request / Install App") },
+                text = { Text("Request App") },
                 containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = Color.White
+                contentColor = MaterialTheme.colorScheme.onPrimary
             )
         }
     ) { innerPadding ->
@@ -192,49 +194,30 @@ fun AppManagementContent(
         ) {
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Subtitle & Pillar Badge
+            // Screen header & pending badge
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "PILLAR 2: APP CONTROLS",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold
+                        color = KGColors.inkMuted
                     )
                     Text(
                         text = "Install Approvals & Suitability",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold
+                        style = MaterialTheme.typography.headlineMedium,
+                        modifier = Modifier.padding(top = 2.dp)
                     )
                 }
 
                 if (pendingCount > 0) {
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Color(0xFFFFF3E0))
-                            .padding(horizontal = 10.dp, vertical = 6.dp)
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Default.HourglassTop,
-                                contentDescription = null,
-                                tint = Color(0xFFE65100),
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "$pendingCount Pending",
-                                color = Color(0xFFE65100),
-                                fontWeight = FontWeight.Bold,
-                                style = MaterialTheme.typography.labelMedium
-                            )
-                        }
-                    }
+                    KGStatusTag(
+                        text = "$pendingCount Pending",
+                        color = KGColors.warning
+                    )
                 }
             }
 
@@ -320,27 +303,19 @@ fun AppManagementContent(
                         .padding(bottom = 64.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            Icons.Default.Apps,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                            modifier = Modifier.size(64.dp)
+                    if (managedApps.isEmpty()) {
+                        // No family data or no apps yet: the honest empty state.
+                        KGEmptyState(
+                            icon = Icons.Default.Apps,
+                            title = "No apps yet",
+                            description = "Apps your child installs will appear here for approval."
                         )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = if (selectedFilter == AppApprovalStatus.PENDING_REVIEW)
-                                "No pending app install requests."
-                            else
-                                "No applications found.",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "Tap 'Request / Install App' below to simulate a kid installing an application.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        // Apps exist, but the active filter/child selection excludes them all.
+                        KGEmptyState(
+                            icon = Icons.Default.Apps,
+                            title = "No apps match this filter",
+                            description = "Try a different approval status or child to see more apps."
                         )
                     }
                 }
@@ -388,7 +363,11 @@ fun AppManagementContent(
                 Column {
                     Text("Choose maximum daily screen time for this application:")
                     Spacer(modifier = Modifier.height(16.dp))
-                    Text("${limitSlider.toInt()} minutes", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    Text(
+                        "${limitSlider.toInt()} minutes",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
                     Slider(
                         value = limitSlider,
                         onValueChange = { limitSlider = it },
@@ -398,15 +377,19 @@ fun AppManagementContent(
                 }
             },
             confirmButton = {
-                Button(onClick = {
-                    onUpdateLimit(app.id, limitSlider.toInt())
-                    editingAppId = null
-                }) {
-                    Text("Save Limit")
-                }
+                KGPrimaryButton(
+                    text = "Save Limit",
+                    onClick = {
+                        onUpdateLimit(app.id, limitSlider.toInt())
+                        editingAppId = null
+                    }
+                )
             },
             dismissButton = {
-                TextButton(onClick = { editingAppId = null }) { Text("Cancel") }
+                KGTextLink(
+                    text = "Cancel",
+                    onClick = { editingAppId = null }
+                )
             }
         )
     }
@@ -421,184 +404,162 @@ private fun ManagedAppCard(
     onEditLimit: () -> Unit,
     onNavigateToDetail: () -> Unit
 ) {
-    val isPending = app.approvalStatus == AppApprovalStatus.PENDING_REVIEW
-    val cardBorder = if (isPending) Modifier.border(1.5.dp, Color(0xFFE65100), RoundedCornerShape(16.dp)) else Modifier
+    val scoreColor = safetyScoreColor(app.safetyScore)
 
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onNavigateToDetail() }
-            .then(cardBorder),
-        elevation = CardDefaults.cardElevation(defaultElevation = if (isPending) 4.dp else 2.dp),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isPending) Color(0xFFFFFDF9) else MaterialTheme.colorScheme.surface
-        )
+    KGCard(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onNavigateToDetail
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            // Header: Icon + Name + Category + Safety Score
+        // Header: icon placeholder + name + meta + safety score
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                    Box(
-                        modifier = Modifier
-                            .size(46.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(
-                                if (isPending) Color(0xFFFFE0B2) else MaterialTheme.colorScheme.primaryContainer
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Apps,
-                            contentDescription = null,
-                            tint = if (isPending) Color(0xFFE65100) else MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            text = app.appName,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "${app.category} • Age ${app.minAgeRating}+" +
-                                if (app.childName.isNotBlank()) " • For ${app.childName}" else "",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-
-                val scoreColor = if (app.safetyScore > 75) Color(0xFF2E7D32) else if (app.safetyScore > 50) Color(0xFFE65100) else Color(0xFFC62828)
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(scoreColor.copy(alpha = 0.12f))
-                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                        .size(40.dp)
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh, KGShapes.circle),
+                    contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "Safety: ${app.safetyScore}%",
-                        color = scoreColor,
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.labelMedium
+                        text = app.appName.firstOrNull()?.uppercase() ?: "?",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                 }
-            }
-
-            // Safety reason / suitability details
-            if (app.safetyReason.isNotBlank()) {
-                Spacer(modifier = Modifier.height(10.dp))
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                        .padding(10.dp)
-                ) {
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
                     Text(
-                        text = app.safetyReason,
+                        text = app.appName,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        text = buildString {
+                            append(app.category)
+                            append(" • ")
+                            append(app.packageName)
+                            if (app.childName.isNotBlank()) append(" • For ${app.childName}")
+                        },
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = KGColors.inkMuted
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.width(8.dp))
 
-            // Daily limit row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            KGStatusTag(
+                text = "Safety ${app.safetyScore}",
+                color = scoreColor
+            )
+        }
+
+        // Safety reason / suitability details
+        if (app.safetyReason.isNotBlank()) {
+            Spacer(modifier = Modifier.height(10.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh, KGShapes.cardSmall)
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.clickable { onEditLimit() }
-                ) {
-                    Icon(
-                        Icons.Default.Schedule,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "Daily limit: ${app.dailyLimitMinutes}m",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-
-                StatusTag(status = app.approvalStatus)
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Action Buttons
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (app.approvalStatus != AppApprovalStatus.REJECTED) {
-                    OutlinedButton(
-                        onClick = onReject,
-                        enabled = !busy,
-                        shape = RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFC62828)),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 6.dp)
-                    ) {
-                        Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(2.dp))
-                        Text(if (isPending) "Decline" else "Revoke", maxLines = 1, softWrap = false)
-                    }
-                }
-
-                if (app.approvalStatus != AppApprovalStatus.APPROVED) {
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Button(
-                        onClick = onApprove,
-                        enabled = !busy,
-                        shape = RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 6.dp)
-                    ) {
-                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(2.dp))
-                        Text("Approve", maxLines = 1, softWrap = false)
-                    }
-                }
+                Text(
+                    text = app.safetyReason,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = KGColors.inkMuted
+                )
             }
         }
-    }
-}
 
-@Composable
-private fun StatusTag(status: AppApprovalStatus) {
-    val (color, text) = when (status) {
-        AppApprovalStatus.APPROVED -> Color(0xFF2E7D32) to "APPROVED"
-        AppApprovalStatus.PENDING_REVIEW -> Color(0xFFE65100) to "PENDING APPROVAL"
-        AppApprovalStatus.REJECTED -> Color(0xFFC62828) to "REJECTED"
-    }
+        Spacer(modifier = Modifier.height(12.dp))
 
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
-            .background(color.copy(alpha = 0.12f))
-            .padding(horizontal = 8.dp, vertical = 3.dp)
-    ) {
-        Text(
-            text = text,
-            color = color,
-            fontWeight = FontWeight.Bold,
-            style = MaterialTheme.typography.labelSmall
-        )
+        // Daily limit row + status chip
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable { onEditLimit() }
+            ) {
+                Icon(
+                    Icons.Default.Schedule,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = KGColors.inkMuted
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = "Daily limit: ${app.dailyLimitMinutes}m",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+
+            KGStatusTag(
+                text = when (app.approvalStatus) {
+                    AppApprovalStatus.APPROVED -> "APPROVED"
+                    AppApprovalStatus.PENDING_REVIEW -> "PENDING REVIEW"
+                    AppApprovalStatus.REJECTED -> "REJECTED"
+                },
+                color = when (app.approvalStatus) {
+                    AppApprovalStatus.APPROVED -> KGColors.success
+                    AppApprovalStatus.PENDING_REVIEW -> KGColors.warning
+                    AppApprovalStatus.REJECTED -> KGColors.danger
+                }
+            )
+        }
+
+        // Inline actions — pending apps get Approve / Decline, approved apps keep Revoke,
+        // rejected apps show nothing.
+        when (app.approvalStatus) {
+            AppApprovalStatus.PENDING_REVIEW -> {
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    KGSecondaryButton(
+                        text = "Approve",
+                        onClick = onApprove,
+                        enabled = !busy,
+                        leading = {
+                            Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                        }
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    KGDangerButton(
+                        text = "Decline",
+                        onClick = onReject,
+                        enabled = !busy
+                    )
+                }
+            }
+            AppApprovalStatus.APPROVED -> {
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    KGDangerButton(
+                        text = "Revoke",
+                        onClick = onReject,
+                        enabled = !busy
+                    )
+                }
+            }
+            AppApprovalStatus.REJECTED -> Unit
+        }
     }
 }
 
@@ -626,18 +587,26 @@ private fun RequestAppDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Request / Install New App", fontWeight = FontWeight.Bold) },
+        title = { Text("Request an App", fontWeight = FontWeight.SemiBold) },
         text = {
-            Column(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+            ) {
                 Text(
-                    text = "Simulates a kid attempting to install an application. The request is submitted to Firebase and triggers real-time parent notifications.",
+                    text = "Sent from the child device — the request goes to the parent for review and approval before the app can be used.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = KGColors.inkMuted
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                Text("Quick Presets:", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    "Quick presets",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
                 Spacer(modifier = Modifier.height(4.dp))
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     items(presets) { (preset, age) ->
@@ -656,50 +625,46 @@ private fun RequestAppDialog(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                OutlinedTextField(
+                KGTextField(
                     value = appName,
                     onValueChange = { appName = it },
-                    label = { Text("App Name") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
+                    label = "App Name",
+                    modifier = Modifier.fillMaxWidth()
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                OutlinedTextField(
+                KGTextField(
                     value = packageName,
                     onValueChange = { packageName = it },
-                    label = { Text("Package Name") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
+                    label = "Package Name",
+                    modifier = Modifier.fillMaxWidth()
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
+                    KGTextField(
                         value = category,
                         onValueChange = { category = it },
-                        label = { Text("Category") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(12.dp)
+                        label = "Category",
+                        modifier = Modifier.weight(1f)
                     )
-                    OutlinedTextField(
+                    KGTextField(
                         value = minAgeRating.toString(),
                         onValueChange = { minAgeRating = it.toIntOrNull() ?: 3 },
-                        label = { Text("Min Age") },
-                        singleLine = true,
-                        modifier = Modifier.width(80.dp),
-                        shape = RoundedCornerShape(12.dp)
+                        label = "Min Age",
+                        modifier = Modifier.width(88.dp)
                     )
                 }
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                Text("Daily Limit: ${dailyLimit} minutes", style = MaterialTheme.typography.bodySmall)
+                Text(
+                    "Daily Limit: ${dailyLimit} minutes",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = KGColors.inkMuted
+                )
                 Slider(
                     value = dailyLimit.toFloat(),
                     onValueChange = { dailyLimit = it.toInt() },
@@ -709,17 +674,19 @@ private fun RequestAppDialog(
             }
         },
         confirmButton = {
-            Button(
+            KGPrimaryButton(
+                text = "Send Request",
                 onClick = {
                     onSubmit(selectedChild, appName, packageName, category, minAgeRating, dailyLimit)
                 },
                 enabled = appName.isNotBlank() && packageName.isNotBlank()
-            ) {
-                Text("Submit Request")
-            }
+            )
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            KGTextLink(
+                text = "Cancel",
+                onClick = onDismiss
+            )
         }
     )
 }

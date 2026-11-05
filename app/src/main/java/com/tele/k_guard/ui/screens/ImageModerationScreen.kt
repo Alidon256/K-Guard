@@ -5,7 +5,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -15,17 +14,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddPhotoAlternate
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -34,14 +30,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.tele.k_guard.data.model.AgeProfile
 import com.tele.k_guard.data.model.ModerationUiState
+import com.tele.k_guard.ui.components.KGPrimaryButton
+import com.tele.k_guard.ui.components.KGSecondaryButton
+import com.tele.k_guard.ui.components.KGSectionHeader
+import com.tele.k_guard.ui.components.KGTextLink
 import com.tele.k_guard.ui.components.KGuardTopAppBar
 import com.tele.k_guard.ui.components.ModerationResultCard
+import com.tele.k_guard.ui.theme.KGColors
+import com.tele.k_guard.ui.theme.KGShapes
 import com.tele.k_guard.ui.theme.KGuardTheme
 import com.tele.k_guard.viewmodel.ImageModerationViewModel
 
@@ -86,6 +87,8 @@ fun ImageModerationContent(
     onReset: () -> Unit,
     onNavigateBack: () -> Unit
 ) {
+    val isLoading = uiState is ModerationUiState.Loading
+
     Scaffold(
         topBar = {
             KGuardTopAppBar(
@@ -102,34 +105,25 @@ fun ImageModerationContent(
                 .padding(16.dp)
                 .verticalScroll(rememberScrollState())
         ) {
-            Text(
-                text = "Select Image for Safety Moderation",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(modifier = Modifier.height(4.dp))
+            KGSectionHeader("Select Image for Safety Moderation")
             if (profileLoaded) {
                 Text(
                     text = "Evaluating under profile: ${activeAgeProfile.title}",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary
+                    color = KGColors.inkMuted
                 )
             }
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            // Preview: the chosen image, or a quiet placeholder until one is picked.
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(200.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
-                    .border(
-                        width = 1.dp,
-                        color = MaterialTheme.colorScheme.outline,
-                        shape = RoundedCornerShape(16.dp)
-                    )
-                    .clickable { onPickImage() },
+                    .clip(KGShapes.cardSmall)
+                    .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                    .border(1.dp, KGColors.hairline, KGShapes.cardSmall),
                 contentAlignment = Alignment.Center
             ) {
                 if (selectedImageUri != null) {
@@ -143,13 +137,13 @@ fun ImageModerationContent(
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(
                             imageVector = Icons.Default.AddPhotoAlternate,
-                            contentDescription = "Pick Image",
-                            tint = MaterialTheme.colorScheme.primary,
+                            contentDescription = null,
+                            tint = KGColors.inkMuted,
                             modifier = Modifier.size(48.dp)
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "Tap to pick an image from gallery",
+                            text = "No image selected yet",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -159,25 +153,36 @@ fun ImageModerationContent(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            Button(
-                onClick = onSubmit,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp),
-                enabled = uiState !is ModerationUiState.Loading && selectedImageUri != null,
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                if (uiState is ModerationUiState.Loading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.padding(end = 8.dp),
-                        color = MaterialTheme.colorScheme.onPrimary,
-                        strokeWidth = 2.dp
+            KGSecondaryButton(
+                text = if (selectedImageUri == null) "Pick image from gallery" else "Choose a different image",
+                onClick = onPickImage,
+                modifier = Modifier.fillMaxWidth(),
+                leading = {
+                    Icon(
+                        imageVector = Icons.Default.AddPhotoAlternate,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
                     )
-                    Text("Scanning Image...")
-                } else {
-                    Text("Moderate Image Safety", fontWeight = FontWeight.Bold)
                 }
-            }
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            KGPrimaryButton(
+                text = if (isLoading) "Scanning…" else "Moderate Image Safety",
+                onClick = onSubmit,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isLoading && selectedImageUri != null,
+                leading = if (isLoading) {
+                    {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            strokeWidth = 2.dp
+                        )
+                    }
+                } else null
+            )
 
             Spacer(modifier = Modifier.height(20.dp))
 
@@ -200,8 +205,7 @@ fun ImageModerationContent(
                 is ModerationUiState.Success -> {
                     Text(
                         text = "Moderation Result",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold
+                        style = MaterialTheme.typography.titleLarge
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     ModerationResultCard(
@@ -210,17 +214,16 @@ fun ImageModerationContent(
                         originalContent = state.originalContent,
                         isImage = true
                     )
-                    TextButton(
+                    KGTextLink(
+                        text = "Pick Another Image",
                         onClick = onReset,
                         modifier = Modifier.align(Alignment.End)
-                    ) {
-                        Text("Pick Another Image")
-                    }
+                    )
                 }
                 is ModerationUiState.Error -> {
                     Text(
                         text = "Error: ${state.message}",
-                        color = MaterialTheme.colorScheme.error,
+                        color = KGColors.danger,
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }

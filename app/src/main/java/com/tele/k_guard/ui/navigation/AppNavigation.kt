@@ -208,7 +208,8 @@ fun AppNavigation(
                 onNavigateToFlaggedContent = { navController.navigate(Screen.ReviewQueue.route) },
                 onNavigateToPrivacy = { navController.navigate(Screen.Privacy.route) },
                 onNavigateToWebProtection = { navController.navigate(Screen.WebProtection.route) },
-                onNavigateToProfile = { navController.navigate(Screen.Profile.route) }
+                onNavigateToProfile = { navController.navigate(Screen.Profile.route) },
+                onNavigateToChildren = { navController.navigate(Screen.Children.route) }
             )
         }
 
@@ -256,7 +257,8 @@ fun AppNavigation(
                 viewModel = screenTimeViewModel,
                 session = session,
                 activeAgeProfile = activeAgeProfile,
-                onNavigateBack = { navController.popBackStack() }
+                onNavigateBack = { navController.popBackStack() },
+                onNavigateToChildren = { navController.navigate(Screen.Children.route) }
             )
         }
 

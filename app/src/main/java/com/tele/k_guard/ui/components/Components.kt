@@ -59,6 +59,8 @@ import com.tele.k_guard.R
 import com.tele.k_guard.data.model.AgeProfile
 import com.tele.k_guard.data.model.ModerationDecision
 import com.tele.k_guard.data.model.ModerationResponse
+import com.tele.k_guard.ui.theme.KGColors
+import com.tele.k_guard.ui.theme.KGShapes
 
 /**
  * Requests a runtime permission and reports the outcome via [onResult] (true = granted, false = denied).
@@ -112,8 +114,7 @@ fun KGuardTopAppBar(
 }
 
 private data class DecisionStyle(
-    val backgroundColor: Color,
-    val textColor: Color,
+    val color: Color,
     val label: String,
     val icon: ImageVector
 )
@@ -121,32 +122,33 @@ private data class DecisionStyle(
 @Composable
 fun DecisionBadge(decision: ModerationDecision) {
     val style = when (decision) {
-        ModerationDecision.ALLOW -> DecisionStyle(Color(0xFF2E7D32), Color.White, "ALLOW", Icons.Default.CheckCircle)
-        ModerationDecision.WARN -> DecisionStyle(Color(0xFFE65100), Color.White, "WARN", Icons.Default.Warning)
-        ModerationDecision.BLUR -> DecisionStyle(Color(0xFF0277BD), Color.White, "BLUR", Icons.Default.Info)
-        ModerationDecision.BLOCK -> DecisionStyle(Color(0xFFC62828), Color.White, "BLOCK", Icons.Default.Lock)
-        ModerationDecision.REVIEW -> DecisionStyle(Color(0xFF6A1B9A), Color.White, "REVIEW", Icons.Default.Info)
+        ModerationDecision.ALLOW -> DecisionStyle(KGColors.success, "ALLOW", Icons.Default.CheckCircle)
+        ModerationDecision.WARN -> DecisionStyle(KGColors.warning, "WARN", Icons.Default.Warning)
+        ModerationDecision.BLUR -> DecisionStyle(KGColors.accent, "BLUR", Icons.Default.Info)
+        ModerationDecision.BLOCK -> DecisionStyle(KGColors.danger, "BLOCK", Icons.Default.Lock)
+        ModerationDecision.REVIEW -> DecisionStyle(KGColors.inkMuted, "REVIEW", Icons.Default.Info)
     }
 
+    // Colour as signal: faint tinted pill, never a filled block.
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(style.backgroundColor)
+            .clip(KGShapes.pill)
+            .background(style.color.copy(alpha = 0.12f))
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
             imageVector = style.icon,
             contentDescription = style.label,
-            tint = style.textColor,
-            modifier = Modifier.size(18.dp)
+            tint = style.color,
+            modifier = Modifier.size(16.dp)
         )
         Spacer(modifier = Modifier.width(6.dp))
         Text(
             text = style.label,
-            color = style.textColor,
-            fontWeight = FontWeight.Bold,
-            fontSize = 13.sp
+            color = style.color,
+            fontWeight = FontWeight.SemiBold,
+            style = MaterialTheme.typography.labelMedium
         )
     }
 }
@@ -165,10 +167,9 @@ fun ModerationResultCard(
             .fillMaxWidth()
             .padding(vertical = 8.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-        shape = RoundedCornerShape(16.dp)
+        shape = KGShapes.card
     ) {
         Column(
             modifier = Modifier.padding(16.dp)
@@ -203,7 +204,7 @@ fun ModerationResultCard(
                     Text(
                         text = "Not assessed yet",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = Color(0xFF6A1B9A),
+                        color = KGColors.inkMuted,
                         fontWeight = FontWeight.Bold
                     )
                 } else {
@@ -215,14 +216,14 @@ fun ModerationResultCard(
                     Text(
                         text = "${(response.riskScore * 100).toInt()}%",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = if (response.riskScore > 0.6f) Color(0xFFC62828) else Color(0xFF2E7D32),
+                        color = if (response.riskScore > 0.6f) KGColors.danger else KGColors.success,
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(modifier = Modifier.width(16.dp))
                     Text(
                         text = if (response.ageAppropriate) "Suitable for Age" else "Unsuitable for Age",
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (response.ageAppropriate) Color(0xFF2E7D32) else Color(0xFFC62828),
+                        color = if (response.ageAppropriate) KGColors.success else KGColors.danger,
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -252,10 +253,10 @@ fun ModerationResultCard(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(Color(0xFFE8F5E9))
+                                .background(KGColors.success.copy(alpha = 0.10f))
                                 .padding(12.dp)
                         ) {
-                            Text(text = originalContent, color = Color(0xFF1B5E20))
+                            Text(text = originalContent, color = KGColors.success)
                         }
                     }
                 }
@@ -264,23 +265,23 @@ fun ModerationResultCard(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFFFFF3E0))
+                            .background(KGColors.warning.copy(alpha = 0.10f))
                             .padding(12.dp)
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFFE65100))
+                            Icon(Icons.Default.Warning, contentDescription = null, tint = KGColors.warning)
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = "Safety Warning",
                                 fontWeight = FontWeight.Bold,
-                                color = Color(0xFFE65100)
+                                color = KGColors.warning
                             )
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = "This content contains sensitive terms. Please exercise discretion.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = Color(0xFFBF360C)
+                            color = KGColors.danger
                         )
                         if (!isImage && originalContent != null) {
                             Spacer(modifier = Modifier.height(8.dp))
@@ -293,13 +294,13 @@ fun ModerationResultCard(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFFE1F5FE))
+                            .background(KGColors.accent.copy(alpha = 0.10f))
                             .padding(12.dp)
                     ) {
                         Text(
                             text = "Content Blurred for Safety",
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFF0277BD)
+                            color = KGColors.accent
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         if (isImage && originalContent != null) {
@@ -325,13 +326,13 @@ fun ModerationResultCard(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .height(180.dp)
-                                            .background(Color(0xFF455A64))
+                                            .background(Color.Black.copy(alpha = 0.6f))
                                     )
                                 }
                                 if (!isBlurRevealed && response.canReveal) {
                                     Button(
                                         onClick = { isBlurRevealed = true },
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0277BD))
+                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary)
                                     ) {
                                         Text("Tap to Reveal Preview")
                                     }
@@ -347,7 +348,7 @@ fun ModerationResultCard(
                                 Button(
                                     onClick = { isBlurRevealed = !isBlurRevealed },
                                     modifier = Modifier.padding(top = 4.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0277BD))
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary)
                                 ) {
                                     Text(if (isBlurRevealed) "Hide Content" else "Reveal Content")
                                 }
@@ -355,7 +356,7 @@ fun ModerationResultCard(
                                 Text(
                                     text = "A parent has set this profile so blurred items stay hidden.",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = Color(0xFF01579B)
+                                    color = KGColors.inkMuted
                                 )
                             }
                         }
@@ -366,26 +367,26 @@ fun ModerationResultCard(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFFFFEBEE))
+                            .background(KGColors.danger.copy(alpha = 0.10f))
                             .padding(12.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Icon(
                             imageVector = Icons.Default.Lock,
                             contentDescription = "Blocked",
-                            tint = Color(0xFFC62828),
+                            tint = KGColors.danger,
                             modifier = Modifier.size(36.dp)
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = "Content Restricted",
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFFC62828)
+                            color = KGColors.danger
                         )
                         Text(
                             text = "This item cannot be viewed under ${activeAgeProfile.title} settings.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = Color(0xFFB71C1C)
+                            color = KGColors.danger.copy(alpha = 0.7f)
                         )
                     }
                 }
@@ -394,12 +395,12 @@ fun ModerationResultCard(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFFF3E5F5))
+                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                             .padding(12.dp)
                     ) {
                         Text(
                             text = "This item is held until a parent reviews it. It has not been approved.",
-                            color = Color(0xFF4A148C),
+                            color = KGColors.inkMuted,
                             style = MaterialTheme.typography.bodyMedium
                         )
                     }
@@ -421,14 +422,14 @@ fun AgeProfileCard(
             .padding(vertical = 6.dp)
             .clickable { onSelect() }
             .border(
-                width = if (isSelected) 2.dp else 0.dp,
-                color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
-                shape = RoundedCornerShape(12.dp)
+                width = if (isSelected) 1.dp else 0.dp,
+                color = if (isSelected) KGColors.accent else Color.Transparent,
+                shape = KGShapes.cardSmall
             ),
         colors = CardDefaults.cardColors(
-            containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            containerColor = if (isSelected) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surfaceContainerLow
         ),
-        shape = RoundedCornerShape(12.dp)
+        shape = KGShapes.cardSmall
     ) {
         Row(
             modifier = Modifier.padding(16.dp),
@@ -452,7 +453,7 @@ fun AgeProfileCard(
                     Text(
                         text = "(${profile.ageRange})",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = KGColors.accent,
                         fontWeight = FontWeight.SemiBold
                     )
                 }

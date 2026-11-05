@@ -7,28 +7,29 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.tele.k_guard.data.model.AgeProfile
 import com.tele.k_guard.data.model.ModerationUiState
+import com.tele.k_guard.ui.components.KGPrimaryButton
+import com.tele.k_guard.ui.components.KGSectionHeader
+import com.tele.k_guard.ui.components.KGTextLink
+import com.tele.k_guard.ui.components.KGTextField
 import com.tele.k_guard.ui.components.KGuardTopAppBar
 import com.tele.k_guard.ui.components.ModerationResultCard
+import com.tele.k_guard.ui.theme.KGColors
 import com.tele.k_guard.ui.theme.KGuardTheme
 import com.tele.k_guard.viewmodel.TextModerationViewModel
 
@@ -66,6 +67,8 @@ fun TextModerationContent(
     onReset: () -> Unit,
     onNavigateBack: () -> Unit
 ) {
+    val isLoading = uiState is ModerationUiState.Loading
+
     Scaffold(
         topBar = {
             KGuardTopAppBar(
@@ -82,53 +85,42 @@ fun TextModerationContent(
                 .padding(16.dp)
                 .verticalScroll(rememberScrollState())
         ) {
-            Text(
-                text = "Enter Text for Safety Analysis",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(modifier = Modifier.height(4.dp))
+            KGSectionHeader("Enter Text for Safety Analysis")
             if (profileLoaded) {
                 Text(
                     text = "Evaluating against active profile: ${activeAgeProfile.title}",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary
+                    color = KGColors.inkMuted
                 )
             }
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            OutlinedTextField(
+            KGTextField(
                 value = inputText,
                 onValueChange = onInputTextChange,
-                label = { Text("Input message or comment") },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(140.dp),
-                shape = RoundedCornerShape(12.dp)
+                label = "Input message or comment",
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = false
             )
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            Button(
+            KGPrimaryButton(
+                text = if (isLoading) "Analyzing…" else "Evaluate Content Safety",
                 onClick = onSubmit,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp),
-                enabled = uiState !is ModerationUiState.Loading && inputText.isNotBlank(),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                if (uiState is ModerationUiState.Loading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.padding(end = 8.dp),
-                        color = MaterialTheme.colorScheme.onPrimary,
-                        strokeWidth = 2.dp
-                    )
-                    Text("Analyzing...")
-                } else {
-                    Text("Evaluate Content Safety", fontWeight = FontWeight.Bold)
-                }
-            }
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isLoading && inputText.isNotBlank(),
+                leading = if (isLoading) {
+                    {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            strokeWidth = 2.dp
+                        )
+                    }
+                } else null
+            )
 
             Spacer(modifier = Modifier.height(20.dp))
 
@@ -151,8 +143,7 @@ fun TextModerationContent(
                 is ModerationUiState.Success -> {
                     Text(
                         text = "Moderation Result",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold
+                        style = MaterialTheme.typography.titleLarge
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     ModerationResultCard(
@@ -161,17 +152,16 @@ fun TextModerationContent(
                         originalContent = state.originalContent,
                         isImage = false
                     )
-                    TextButton(
+                    KGTextLink(
+                        text = "Clear & Evaluate New Text",
                         onClick = onReset,
                         modifier = Modifier.align(Alignment.End)
-                    ) {
-                        Text("Clear & Evaluate New Text")
-                    }
+                    )
                 }
                 is ModerationUiState.Error -> {
                     Text(
                         text = "Error: ${state.message}",
-                        color = MaterialTheme.colorScheme.error,
+                        color = KGColors.danger,
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }

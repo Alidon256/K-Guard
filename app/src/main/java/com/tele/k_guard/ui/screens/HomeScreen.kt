@@ -1,11 +1,14 @@
 package com.tele.k_guard.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -13,20 +16,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.FamilyRestroom
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Timer
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -35,17 +36,21 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.tele.k_guard.data.model.AgeProfile
-import com.tele.k_guard.ui.components.KGuardTopAppBar
-import com.tele.k_guard.ui.theme.KGuardTheme
-import androidx.compose.material.icons.filled.Public
+import com.tele.k_guard.ui.components.KGCard
+import com.tele.k_guard.ui.components.KGSectionHeader
+import com.tele.k_guard.ui.components.KGStatusTag
 import com.tele.k_guard.ui.components.KGuardLogo
+import com.tele.k_guard.ui.components.KGuardTopAppBar
+import com.tele.k_guard.ui.theme.KGColors
+import com.tele.k_guard.ui.theme.KGShapes
+import com.tele.k_guard.ui.theme.KGuardTheme
+import java.util.Calendar
 
 @Composable
 fun HomeScreen(
@@ -61,7 +66,8 @@ fun HomeScreen(
     pendingApprovalCount: Int = 0,
     onNavigateToPrivacy: () -> Unit = {},
     onNavigateToWebProtection: () -> Unit = {},
-    onNavigateToProfile: () -> Unit = {}
+    onNavigateToProfile: () -> Unit = {},
+    onNavigateToChildren: () -> Unit = {}
 ) {
     Scaffold(
         topBar = {
@@ -83,156 +89,156 @@ fun HomeScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(16.dp)
+                .padding(20.dp)
                 .verticalScroll(rememberScrollState())
         ) {
-            Card(
+            // Greeting block: display-tier headline + active child context. Taps to the
+            // age-profile screen, preserving the previous hero card's navigation.
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { onNavigateToAgeProfile() },
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer
-                ),
-                shape = RoundedCornerShape(16.dp)
+                    .clickable { onNavigateToAgeProfile() }
+                    .padding(top = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Person,
-                            contentDescription = null,
-                            tint = Color.White
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = if (activeChildName != null) "Protecting $activeChildName" else "No child profile yet — tap to set your age profile",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-                        )
-                        Text(
-                            text = "${activeAgeProfile.title} (${activeAgeProfile.ageRange})",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                    }
-                    Icon(
-                        imageVector = Icons.Default.ChevronRight,
-                        contentDescription = "Change Profile",
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = greeting(),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = KGColors.inkMuted
                     )
+                    Text(
+                        text = activeChildName ?: "No child profile yet",
+                        style = MaterialTheme.typography.displaySmall,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "${activeAgeProfile.title} (${activeAgeProfile.ageRange}) · Tap to change",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = KGColors.inkMuted
+                    )
+                }
+                Icon(
+                    imageVector = Icons.Default.ChevronRight,
+                    contentDescription = "Change Profile",
+                    tint = KGColors.inkMuted
+                )
+            }
+
+            KGSectionHeader(
+                title = "Dashboard",
+                hint = if (activeChildName != null) {
+                    "Everything watching over $activeChildName in one place"
+                } else {
+                    "Every family-safety tool in one place"
+                }
+            )
+
+            // 2-column tool grid: Children first (previously unreachable from here).
+            val cards = listOf(
+                DashboardCardData(
+                    title = "Children",
+                    description = "Manage child profiles & pairing.",
+                    icon = Icons.Default.FamilyRestroom,
+                    tint = KGColors.gradientOrange,
+                    onClick = onNavigateToChildren
+                ),
+                DashboardCardData(
+                    title = "Screen Time",
+                    description = "Live telemetry, app breakdown, and remote switch-off.",
+                    icon = Icons.Default.Timer,
+                    tint = KGColors.accent,
+                    onClick = onNavigateToScreenTime
+                ),
+                DashboardCardData(
+                    title = "App Control",
+                    description = if (pendingApprovalCount > 0) {
+                        "$pendingApprovalCount approval request(s) waiting."
+                    } else {
+                        "Review requests, safety scores, and app limits."
+                    },
+                    icon = Icons.Default.Apps,
+                    tint = KGColors.gradientViolet,
+                    onClick = onNavigateToAppManagement
+                ),
+                DashboardCardData(
+                    title = "Web Protection",
+                    description = "Block harmful websites in every browser and app.",
+                    icon = Icons.Default.Public,
+                    tint = KGColors.success,
+                    onClick = onNavigateToWebProtection
+                ),
+                DashboardCardData(
+                    title = "Review Queue",
+                    description = "Audit flagged content and record your decisions.",
+                    icon = Icons.Default.NotificationsActive,
+                    tint = if (openAlertCount > 0) KGColors.danger else KGColors.warning,
+                    openAlertCount = openAlertCount,
+                    onClick = onNavigateToFlaggedContent
+                ),
+                DashboardCardData(
+                    title = "Moderate Text",
+                    description = "Scan messages, comments, and web terms for age safety.",
+                    icon = Icons.Default.Description,
+                    tint = KGColors.gradientMagenta,
+                    onClick = onNavigateToTextModeration
+                ),
+                DashboardCardData(
+                    title = "Moderate Images",
+                    description = "Automatic warnings, blur previews, or blocks on photos.",
+                    icon = Icons.Default.Image,
+                    tint = KGColors.gradientCoral,
+                    onClick = onNavigateToImageModeration
+                ),
+                DashboardCardData(
+                    title = "Privacy",
+                    description = "Alert preferences, quiet hours, and data retention.",
+                    icon = Icons.Default.Lock,
+                    tint = KGColors.inkMuted,
+                    onClick = onNavigateToPrivacy
+                )
+            )
+            cards.chunked(2).forEach { rowCards ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(IntrinsicSize.Min)
+                        .padding(bottom = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    rowCards.forEach { card ->
+                        DashboardToolCard(
+                            data = card,
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                        )
+                    }
                 }
             }
 
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            PillarHeader(pillar = "MANAGE", title = "Digital Habits")
-            Spacer(modifier = Modifier.height(8.dp))
-            DashboardToolCard(
-                title = "Screen Time & Device Controls",
-                description = "Live phone telemetry, app breakdown, and remote screen switch-off.",
-                icon = Icons.Default.Timer,
-                badgeColor = Color(0xFF1E88E5),
-                onClick = onNavigateToScreenTime
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            PillarHeader(pillar = "CONTROL", title = "App Access")
-            Spacer(modifier = Modifier.height(8.dp))
-            DashboardToolCard(
-                title = "App Approvals & Safety Ratings",
-                description = "Review app requests, safety scores, and app-specific limits.",
-                icon = Icons.Default.Apps,
-                badgeColor = Color(0xFF8E24AA),
-                pendingCount = pendingApprovalCount,
-                onClick = onNavigateToAppManagement
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            PillarHeader(pillar = "PROTECT (FLAGSHIP)", title = "AI Online Content Safety")
-            Spacer(modifier = Modifier.height(8.dp))
-            DashboardToolCard(
-                title = "AI Text Content Moderation",
-                description = "Scan text messages, comments, and web terms for age safety.",
-                icon = Icons.Default.Description,
-                badgeColor = MaterialTheme.colorScheme.secondary,
-                onClick = onNavigateToTextModeration
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            DashboardToolCard(
-                title = "Web Protection (VPN)",
-                description = "Block harmful websites in every browser and app on this phone.",
-                icon = Icons.Default.Public,
-                badgeColor = Color(0xFF00897B),
-                onClick = onNavigateToWebProtection
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            DashboardToolCard(
-                title = "AI Image Content Moderation",
-                description = "Scan photos with automatic warnings, blur previews, or blocks.",
-                icon = Icons.Default.Image,
-                badgeColor = MaterialTheme.colorScheme.tertiary,
-                onClick = onNavigateToImageModeration
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            PillarHeader(pillar = "PARENT OVERSIGHT", title = "Alerts & Privacy")
-            Spacer(modifier = Modifier.height(8.dp))
-            DashboardToolCard(
-                title = "Alerts & Parent Review",
-                description = if (openAlertCount > 0) "$openAlertCount event(s) waiting for your review." else "Audit flagged content and record allow/keep-blocked actions.",
-                icon = Icons.Default.NotificationsActive,
-                badgeColor = if (openAlertCount > 0) Color(0xFFC62828) else Color(0xFF5E35B1),
-                pendingCount = openAlertCount,
-                onClick = onNavigateToFlaggedContent
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            DashboardToolCard(
-                title = "Privacy & Notification Settings",
-                description = "Choose which alerts notify you, quiet hours, and data retention.",
-                icon = Icons.Default.Lock,
-                badgeColor = Color(0xFF37474F),
-                onClick = onNavigateToPrivacy
-            )
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                ),
-                shape = RoundedCornerShape(12.dp)
+            // The single gradient spotlight allowed on this screen: a slim brand banner.
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        brush = Brush.horizontalGradient(
+                            colors = listOf(KGColors.gradientOrange, KGColors.gradientCoral)
+                        ),
+                        shape = KGShapes.card
+                    )
+                    .padding(16.dp)
             ) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    KGuardLogo(modifier = Modifier.size(28.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    KGuardLogo(modifier = Modifier.size(32.dp))
                     Spacer(modifier = Modifier.width(12.dp))
                     Text(
                         text = "K-Guard combines Screen Time, App Control, and AI Content Moderation for complete digital family safety.",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = Color.White
                     )
                 }
             }
@@ -240,106 +246,60 @@ fun HomeScreen(
     }
 }
 
-@Composable
-private fun PillarHeader(pillar: String, title: String) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(6.dp))
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
-                .padding(horizontal = 8.dp, vertical = 2.dp)
-        ) {
-            Text(
-                text = pillar,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.Bold
-            )
-        }
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold
-        )
+private fun greeting(): String {
+    return when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
+        in 0..11 -> "Good morning"
+        in 12..16 -> "Good afternoon"
+        else -> "Good evening"
     }
 }
 
+private data class DashboardCardData(
+    val title: String,
+    val description: String,
+    val icon: ImageVector,
+    val tint: Color,
+    val openAlertCount: Int = 0,
+    val onClick: () -> Unit
+)
+
+/** One dashboard tool tile: 40dp tinted icon circle, title, muted description, optional alert tag. */
 @Composable
 private fun DashboardToolCard(
-    title: String,
-    description: String,
-    icon: ImageVector,
-    badgeColor: Color,
-    pendingCount: Int = 0,
-    onClick: () -> Unit
+    data: DashboardCardData,
+    modifier: Modifier = Modifier
 ) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() },
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-        shape = RoundedCornerShape(16.dp)
-    ) {
-        Row(
+    KGCard(modifier = modifier, onClick = data.onClick) {
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .size(40.dp)
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh, KGShapes.circle),
+            contentAlignment = Alignment.Center
         ) {
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(badgeColor.copy(alpha = 0.15f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = badgeColor,
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-
-            Spacer(modifier = Modifier.width(16.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold
-                    )
-                    if (pendingCount > 0) {
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(Color(0xFFE65100))
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                        ) {
-                            Text(
-                                text = "$pendingCount",
-                                color = Color.White,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-                }
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = description,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
             Icon(
-                imageVector = Icons.Default.ChevronRight,
+                imageVector = data.icon,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                tint = data.tint,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+            text = data.title,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = data.description,
+            style = MaterialTheme.typography.bodySmall,
+            color = KGColors.inkMuted
+        )
+        if (data.openAlertCount > 0) {
+            Spacer(modifier = Modifier.height(8.dp))
+            KGStatusTag(
+                text = "${data.openAlertCount} open",
+                color = KGColors.danger
             )
         }
     }

@@ -1,6 +1,8 @@
 package com.tele.k_guard.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -8,14 +10,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -25,12 +23,16 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.tele.k_guard.ui.components.KGPrimaryButton
+import com.tele.k_guard.ui.components.KGStatusTag
+import com.tele.k_guard.ui.components.KGTextField
 import com.tele.k_guard.ui.components.KGuardTopAppBar
+import com.tele.k_guard.ui.theme.KGColors
+import com.tele.k_guard.ui.theme.KGShapes
 import com.tele.k_guard.ui.theme.KGuardTheme
 
 @Composable
@@ -41,6 +43,14 @@ fun ChildPinSetupScreen(
     var confirmPin by rememberSaveable { mutableStateOf("") }
     var error by rememberSaveable { mutableStateOf<String?>(null) }
     val isValid = pin.length >= 4
+
+    // Strength signal: weak = too short or guessable (repeated/sequential), strong = survives the checks.
+    val weakReason = weakPinReason(pin)
+    val strength = when {
+        pin.isEmpty() -> null
+        pin.length < 4 || weakReason != null -> "Weak PIN" to KGColors.warning
+        else -> "Strong PIN" to KGColors.success
+    }
 
     Scaffold(
         topBar = { KGuardTopAppBar("Uninstall Protection PIN", canNavigateBack = false) }
@@ -53,17 +63,22 @@ fun ChildPinSetupScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            Icon(
-                imageVector = Icons.Default.Lock,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(64.dp)
-            )
+            Box(
+                modifier = Modifier
+                    .background(MaterialTheme.colorScheme.surfaceContainerLow, KGShapes.circle)
+                    .padding(18.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Lock,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(28.dp)
+                )
+            }
             Spacer(Modifier.height(16.dp))
             Text(
                 text = "Set Security PIN",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold
+                style = MaterialTheme.typography.headlineSmall
             )
             Spacer(Modifier.height(8.dp))
             Text(
@@ -74,53 +89,52 @@ fun ChildPinSetupScreen(
 
             Spacer(Modifier.height(24.dp))
 
-            OutlinedTextField(
+            KGTextField(
                 value = pin,
                 onValueChange = { if (it.length <= 6) pin = it.filter { c -> c.isDigit() } },
-                label = { Text("Enter Security PIN (4-6 digits)") },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                label = "Enter Security PIN (4-6 digits)",
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp)
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardType = KeyboardType.NumberPassword
             )
+            strength?.let { (label, color) ->
+                Box(Modifier.fillMaxWidth()) {
+                    KGStatusTag(text = label, color = color, modifier = Modifier.padding(top = 8.dp))
+                }
+            }
 
             Spacer(Modifier.height(12.dp))
 
-            OutlinedTextField(
+            KGTextField(
                 value = confirmPin,
                 onValueChange = { if (it.length <= 6) confirmPin = it.filter { c -> c.isDigit() } },
-                label = { Text("Confirm Security PIN") },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                label = "Confirm Security PIN",
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp)
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardType = KeyboardType.NumberPassword
             )
 
             error?.let {
                 Spacer(Modifier.height(8.dp))
-                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                Text(it, color = KGColors.danger, style = MaterialTheme.typography.bodySmall)
             }
 
             Spacer(Modifier.height(24.dp))
 
-            Button(
+            KGPrimaryButton(
+                text = "Save PIN & Activate Protection",
                 onClick = {
-                    val weakReason = weakPinReason(pin)
+                    val weak = weakPinReason(pin)
                     when {
                         pin.length < 4 -> error = "PIN must be at least 4 digits."
                         pin != confirmPin -> error = "PINs do not match."
-                        weakReason != null -> error = weakReason
+                        weak != null -> error = weak
                         else -> onPinSaved(pin)
                     }
                 },
                 enabled = isValid,
-                modifier = Modifier.fillMaxWidth().height(48.dp),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Text("Save PIN & Activate Protection", fontWeight = FontWeight.Bold)
-            }
+                modifier = Modifier.fillMaxWidth()
+            )
         }
     }
 }

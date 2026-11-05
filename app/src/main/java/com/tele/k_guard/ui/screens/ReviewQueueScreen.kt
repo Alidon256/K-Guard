@@ -12,17 +12,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FactCheck
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -31,15 +27,22 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.tele.k_guard.data.model.ChildProfile
 import com.tele.k_guard.data.model.ParentAction
 import com.tele.k_guard.data.model.SafetyEvent
 import com.tele.k_guard.ui.components.DecisionBadge
+import com.tele.k_guard.ui.components.KGCard
+import com.tele.k_guard.ui.components.KGDangerButton
+import com.tele.k_guard.ui.components.KGEmptyState
+import com.tele.k_guard.ui.components.KGPrimaryButton
+import com.tele.k_guard.ui.components.KGSecondaryButton
+import com.tele.k_guard.ui.components.KGTextLink
+import com.tele.k_guard.ui.components.KGTextField
 import com.tele.k_guard.ui.components.KGuardTopAppBar
+import com.tele.k_guard.ui.theme.KGColors
+import com.tele.k_guard.ui.theme.KGShapes
 import com.tele.k_guard.ui.theme.KGuardTheme
 import com.tele.k_guard.viewmodel.SessionViewModel
 import java.text.DateFormat
@@ -106,14 +109,15 @@ fun ReviewQueueContent(
                     }
                 }
             }
-            error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            error?.let { Text(it, color = KGColors.danger, style = MaterialTheme.typography.bodySmall) }
             Spacer(Modifier.height(8.dp))
 
             if (shown.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(
-                        if (onlyOpen) "Nothing needs your review right now." else "No safety events recorded yet.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    KGEmptyState(
+                        icon = Icons.Default.FactCheck,
+                        title = if (onlyOpen) "Nothing to review" else "No alerts yet",
+                        description = if (onlyOpen) "Nothing needs your review right now." else "No safety events recorded yet."
                     )
                 }
             } else {
@@ -133,69 +137,68 @@ fun ReviewQueueContent(
             text = {
                 Column {
                     Text("Add an optional note for your records (visible only to parents).")
-                    OutlinedTextField(
+                    KGTextField(
                         value = pendingNote,
                         onValueChange = { pendingNote = it.take(300) },
+                        label = "Note (optional)",
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                        shape = RoundedCornerShape(12.dp)
+                        singleLine = false
                     )
                 }
             },
             confirmButton = {
-                TextButton(onClick = { onReview(ev.id, action, pendingNote); clearPending() }) { Text("Confirm") }
+                KGPrimaryButton(text = "Confirm", onClick = { onReview(ev.id, action, pendingNote); clearPending() })
             },
-            dismissButton = { TextButton(onClick = { clearPending() }) { Text("Cancel") } }
+            dismissButton = {
+                KGTextLink(text = "Cancel", onClick = { clearPending() })
+            }
         )
     }
 }
 
 @Composable
 private fun EventCard(ev: SafetyEvent, onAction: (ParentAction) -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (ev.isOpen) MaterialTheme.colorScheme.surface
-            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-        ),
-        elevation = CardDefaults.cardElevation(2.dp)
-    ) {
-        Column(Modifier.padding(16.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(ev.childName.ifBlank { "Child" }, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        "${ev.contentType.replaceFirstChar { it.uppercase() }} · ${ev.category.replace('_', ' ')} · ${ev.context}",
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                DecisionBadge(ev.parsedDecision)
-            }
-            Spacer(Modifier.height(8.dp))
-            Text(ev.explanation, style = MaterialTheme.typography.bodyMedium)
-            ev.snippet?.let {
-                Spacer(Modifier.height(8.dp))
-                Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)).padding(8.dp)) {
-                    Text("“$it”", style = MaterialTheme.typography.bodySmall)
-                }
-            }
-            ev.createdAt?.let {
+    KGCard(modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(ev.childName.ifBlank { "Child" }, style = MaterialTheme.typography.titleMedium)
                 Text(
-                    DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(it.toDate()),
-                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 6.dp)
+                    "${ev.contentType.replaceFirstChar { it.uppercase() }} · ${ev.category.replace('_', ' ')} · ${ev.context}",
+                    style = MaterialTheme.typography.bodySmall, color = KGColors.inkMuted
                 )
             }
+            DecisionBadge(ev.parsedDecision)
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(ev.explanation, style = MaterialTheme.typography.bodyMedium)
+        ev.snippet?.let {
             Spacer(Modifier.height(8.dp))
-            if (ev.isOpen) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ParentAction.entries.forEach { a -> OutlinedButton(onClick = { onAction(a) }) { Text(a.label) } }
-                }
-            } else {
-                val done = ParentAction.entries.find { it.id == ev.parentAction }?.label ?: "Reviewed"
-                Text("Reviewed: $done" + (ev.parentNote?.takeIf { it.isNotBlank() }?.let { " — $it" } ?: ""),
-                    style = MaterialTheme.typography.labelMedium, color = androidx.compose.ui.graphics.Color(0xFF2E7D32))
+            Box(Modifier.fillMaxWidth().background(KGColors.hairline, KGShapes.cardSmall).padding(8.dp)) {
+                Text("“$it”", style = MaterialTheme.typography.bodySmall)
             }
+        }
+        ev.createdAt?.let {
+            Text(
+                DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(it.toDate()),
+                style = MaterialTheme.typography.labelSmall, color = KGColors.inkMuted,
+                modifier = Modifier.padding(top = 6.dp)
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        if (ev.isOpen) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ParentAction.entries.forEach { a ->
+                    when (a) {
+                        ParentAction.ALLOW -> KGSecondaryButton(text = a.label, onClick = { onAction(a) })
+                        ParentAction.KEEP_BLOCKED -> KGDangerButton(text = a.label, onClick = { onAction(a) })
+                        ParentAction.DISMISS -> KGTextLink(text = a.label, onClick = { onAction(a) })
+                    }
+                }
+            }
+        } else {
+            val done = ParentAction.entries.find { it.id == ev.parentAction }?.label ?: "Reviewed"
+            Text("Reviewed: $done" + (ev.parentNote?.takeIf { it.isNotBlank() }?.let { " — $it" } ?: ""),
+                style = MaterialTheme.typography.labelMedium, color = KGColors.success)
         }
     }
 }
@@ -224,4 +227,3 @@ fun ReviewQueueScreenPreview() {
         )
     }
 }
-
