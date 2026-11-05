@@ -141,7 +141,7 @@ fun ChildDashboardScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "1h 45m used · 4h 15m remaining",
+                            text = "Screen-time limits set by your parent apply to this device.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -180,7 +180,7 @@ fun ChildDashboardScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "Blocked 3 harmful sites & apps today",
+                            text = "Your parent's protection rules block harmful sites and apps on this device.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

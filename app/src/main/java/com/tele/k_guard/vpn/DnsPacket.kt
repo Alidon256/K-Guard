@@ -1,9 +1,9 @@
 package com.tele.k_guard.vpn
 
-/** Minimal IPv4/UDP/DNS helpers. Pure Kotlin so they can be unit tested on the JVM. */
+/** Minimal IPv4/IPv6 UDP/DNS helpers. Pure Kotlin so they can be unit tested on the JVM. */
 object DnsPacket {
 
-    /** A DNS query found inside a raw IPv4 packet read from the TUN interface. */
+    /** A DNS query found inside a raw IP packet read from the TUN interface. */
     class Query(
         val srcIp: ByteArray,
         val dstIp: ByteArray,
@@ -15,10 +15,17 @@ object DnsPacket {
         val qtype: Int? get() = parseQType(dns)
     }
 
-    /** Returns the DNS query in an IPv4 UDP packet addressed to port 53, or null for anything else. */
+    /** Returns the DNS query in an IPv4/IPv6 UDP packet addressed to port 53, or null for anything else. */
     fun parseQuery(packet: ByteArray, length: Int): Query? {
         if (length < 28) return null
-        if ((packet[0].toInt() shr 4) != 4) return null
+        return when (packet[0].toInt() shr 4) {
+            4 -> parseQuery4(packet, length)
+            6 -> parseQuery6(packet, length)
+            else -> null
+        }
+    }
+
+    private fun parseQuery4(packet: ByteArray, length: Int): Query? {
         val ihl = (packet[0].toInt() and 0x0f) * 4
         if (ihl < 20 || length < ihl + 8) return null
         if ((packet[9].toInt() and 0xff) != 17) return null // UDP only
@@ -26,11 +33,33 @@ object DnsPacket {
         val srcPort = u16(packet, ihl)
         val dstPort = u16(packet, ihl + 2)
         if (dstPort != 53) return null
+        if (srcPort == 53) return null // a "query" from port 53 is a spoofed response, not a client lookup
         val payloadStart = ihl + 8
         if (total <= payloadStart + 12) return null
         return Query(
             srcIp = packet.copyOfRange(12, 16),
             dstIp = packet.copyOfRange(16, 20),
+            srcPort = srcPort,
+            dstPort = dstPort,
+            dns = packet.copyOfRange(payloadStart, total)
+        )
+    }
+
+    /** IPv6 has a fixed 40-byte header followed directly by UDP. Only the fake DNS /128 is routed, so
+     *  no extension headers can appear on this path; anything else is dropped. */
+    private fun parseQuery6(packet: ByteArray, length: Int): Query? {
+        if (length < 48) return null
+        if ((packet[6].toInt() and 0xff) != 17) return null // next header must be UDP
+        val total = (40 + u16(packet, 4)).coerceAtMost(length)
+        val srcPort = u16(packet, 40)
+        val dstPort = u16(packet, 42)
+        if (dstPort != 53) return null
+        if (srcPort == 53) return null
+        val payloadStart = 48
+        if (total <= payloadStart + 12) return null
+        return Query(
+            srcIp = packet.copyOfRange(8, 24),
+            dstIp = packet.copyOfRange(24, 40),
             srcPort = srcPort,
             dstPort = dstPort,
             dns = packet.copyOfRange(payloadStart, total)
@@ -100,14 +129,23 @@ object DnsPacket {
     /** NOERROR with no answers: the name exists but has no records of the asked type. */
     fun noData(query: ByteArray): ByteArray = emptyResponse(query, 0)
 
-    /** A recursive query for [name] and [type], used to ask the upstream resolver on our own behalf. */
-    fun buildQuery(name: String, type: Int, id: Int = 0x4b47): ByteArray {
+    /** SERVFAIL: we could not get an answer for the client (for example a truncated upstream reply). */
+    fun servFail(query: ByteArray): ByteArray = emptyResponse(query, 2)
+
+    /**
+     * A recursive query for [name] and [type], used to ask the upstream resolver on our own behalf.
+     * A fresh random id per query lets us match each response to the query we actually sent.
+     */
+    fun buildQuery(name: String, type: Int, id: Int = randomId()): ByteArray {
         val out = java.io.ByteArrayOutputStream()
         out.write(byteArrayOf((id shr 8).toByte(), id.toByte(), 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0)) // RD, QDCOUNT=1
         out.write(encodeName(name))
         out.write(byteArrayOf((type shr 8).toByte(), type.toByte(), 0, 1)) // QTYPE, QCLASS=IN
         return out.toByteArray()
     }
+
+    private val idRandom = java.util.Random()
+    private fun randomId(): Int = idRandom.nextInt(0x10000)
 
     /**
      * An answer that says the name asked in [query] is an alias (CNAME) of [target], followed by the
@@ -206,9 +244,48 @@ object DnsPacket {
         return p
     }
 
+    /**
+     * Wraps a UDP payload in an IPv6 packet. IPv6 does not permit a zero UDP checksum, so the real
+     * checksum (over the pseudo-header plus the UDP datagram) is computed here.
+     */
+    fun wrapUdp6(srcIp: ByteArray, dstIp: ByteArray, srcPort: Int, dstPort: Int, payload: ByteArray): ByteArray {
+        val p = ByteArray(40 + 8 + payload.size)
+        p[0] = 0x60.toByte()                       // version 6; traffic class and flow label stay zero
+        putU16(p, 4, 8 + payload.size)             // payload length
+        p[6] = 17                                  // next header: UDP
+        p[7] = 64                                  // hop limit
+        System.arraycopy(srcIp, 0, p, 8, 16)
+        System.arraycopy(dstIp, 0, p, 24, 16)
+        putU16(p, 40, srcPort)
+        putU16(p, 42, dstPort)
+        putU16(p, 44, 8 + payload.size)
+        System.arraycopy(payload, 0, p, 48, payload.size)
+        putU16(p, 46, udpChecksum6(p))
+        return p
+    }
+
+    /** UDP checksum for an IPv6 packet [p] built by [wrapUdp6]: pseudo-header + UDP header + payload. */
+    private fun udpChecksum6(p: ByteArray): Int {
+        val udpLength = p.size - 48
+        var sum = 0
+        for (i in 8 until 24) sum += u16(p, i)                        // source address
+        for (i in 24 until 40) sum += u16(p, i)                       // destination address
+        sum += (udpLength shr 16) and 0xffff
+        sum += udpLength and 0xffff
+        sum += 17                                                     // next header
+        sum += u16(p, 40) + u16(p, 42) + u16(p, 44)                   // ports + length (checksum field is zero)
+        var i = 48
+        while (i + 1 < p.size) { sum += u16(p, i); i += 2 }
+        if (i < p.size) sum += (p[i].toInt() and 0xff) shl 8          // odd payload, padded
+        while (sum shr 16 != 0) sum = (sum and 0xffff) + (sum shr 16)
+        val c = sum.inv() and 0xffff
+        return if (c == 0) 0xffff else c                              // zero is transmitted as 0xFFFF in IPv6
+    }
+
     /** Builds the reply packet for [q] carrying [dnsResponse]; source and destination are swapped. */
     fun reply(q: Query, dnsResponse: ByteArray): ByteArray =
-        wrapUdp(q.dstIp, q.srcIp, q.dstPort, q.srcPort, dnsResponse)
+        if (q.srcIp.size == 16) wrapUdp6(q.dstIp, q.srcIp, q.dstPort, q.srcPort, dnsResponse)
+        else wrapUdp(q.dstIp, q.srcIp, q.dstPort, q.srcPort, dnsResponse)
 
     fun ipChecksum(buf: ByteArray, len: Int): Int {
         var sum = 0

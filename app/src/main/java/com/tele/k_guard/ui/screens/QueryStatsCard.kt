@@ -11,12 +11,14 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import com.tele.k_guard.data.model.SafetyCategory
 import com.tele.k_guard.vpn.QueryMonitor
 
@@ -26,6 +28,9 @@ import com.tele.k_guard.vpn.QueryMonitor
  */
 @Composable
 fun QueryStatsCard(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    // Hydrate even when the VPN service never ran in this process; init is idempotent.
+    LaunchedEffect(Unit) { QueryMonitor.init(context) }
     val day by QueryMonitor.today.collectAsState()
 
     Card(modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {

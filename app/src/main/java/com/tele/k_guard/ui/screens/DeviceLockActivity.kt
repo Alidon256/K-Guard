@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Call
@@ -42,29 +44,46 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.lifecycleScope
+import com.tele.k_guard.data.repository.UserPreferencesRepository
 import com.tele.k_guard.ui.theme.KGuardTheme
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * Fullscreen lock activity displayed on the child's phone when switched off or locked remotely.
+ * Back navigation is swallowed so the lock cannot be dismissed without the parent PIN.
  */
 class DeviceLockActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // Keep the lock screen up: back navigation must never finish the activity.
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                // Intentionally a no-op; the remote lock stays until a valid parent PIN unlocks it.
+            }
+        })
 
         // Ensure window displays above keyguard and turns screen on when triggered
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
@@ -74,13 +93,15 @@ class DeviceLockActivity : ComponentActivity() {
             @Suppress("DEPRECATION")
             window.addFlags(
                 WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
-                WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
+                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
             )
         }
+        // Keep the screen awake while the remote lock is showing.
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         val reason = intent.getStringExtra(EXTRA_REASON) ?: "Parent Remote Screen Lock"
         val childName = intent.getStringExtra(EXTRA_CHILD_NAME) ?: "Child"
+        val emergencyNumber = intent.getStringExtra(EXTRA_EMERGENCY_NUMBER) ?: "999"
 
         setContent {
             KGuardTheme {
@@ -92,15 +113,17 @@ class DeviceLockActivity : ComponentActivity() {
                         childName = childName,
                         reason = reason,
                         onEmergencyCall = {
-                            val callIntent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:999"))
-                            startActivity(callIntent)
+                            startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$emergencyNumber")))
                         },
-                        onParentPinUnlock = { pin ->
-                            if (pin == "1234" || pin.length == 4) {
-                                finish()
-                                true
-                            } else {
-                                false
+                        onParentPinUnlock = { pin, onResult ->
+                            lifecycleScope.launch {
+                                val prefs = UserPreferencesRepository(applicationContext)
+                                if (!prefs.hasParentPin()) {
+                                    onResult(false, "No parent PIN set up yet")
+                                } else {
+                                    val ok = prefs.verifyParentPin(pin)
+                                    onResult(ok, if (ok) null else "Incorrect PIN. Please try again.")
+                                }
                             }
                         }
                     )
@@ -112,27 +135,51 @@ class DeviceLockActivity : ComponentActivity() {
     companion object {
         const val EXTRA_REASON = "extra_lock_reason"
         const val EXTRA_CHILD_NAME = "extra_child_name"
+        const val EXTRA_EMERGENCY_NUMBER = "extra_emergency_number"
 
-        fun createIntent(context: Context, childName: String, reason: String): Intent {
+        fun createIntent(
+            context: Context,
+            childName: String,
+            reason: String,
+            emergencyNumber: String = "999"
+        ): Intent {
             return Intent(context, DeviceLockActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 putExtra(EXTRA_CHILD_NAME, childName)
                 putExtra(EXTRA_REASON, reason)
+                putExtra(EXTRA_EMERGENCY_NUMBER, emergencyNumber)
             }
         }
     }
 }
+
+private const val MAX_FAILED_ATTEMPTS = 5
+private const val LOCKOUT_MILLIS = 30_000L
 
 @Composable
 fun DeviceLockScreenContent(
     childName: String,
     reason: String,
     onEmergencyCall: () -> Unit,
-    onParentPinUnlock: (String) -> Boolean
+    onParentPinUnlock: (String, (Boolean, String?) -> Unit) -> Unit
 ) {
-    var showPinDialog by remember { mutableStateOf(false) }
-    var pinInput by remember { mutableStateOf("") }
-    var pinError by remember { mutableStateOf(false) }
+    var showPinDialog by rememberSaveable { mutableStateOf(false) }
+    var pinInput by rememberSaveable { mutableStateOf("") }
+    var pinErrorText by rememberSaveable { mutableStateOf<String?>(null) }
+    var failedAttempts by rememberSaveable { mutableIntStateOf(0) }
+    var lockoutUntilMillis by rememberSaveable { mutableLongStateOf(0L) }
+    var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    val lockedOut = nowMillis < lockoutUntilMillis
+    val secondsRemaining = ((lockoutUntilMillis - nowMillis + 999) / 1000).toInt().coerceAtLeast(0)
+
+    // Tick the lockout countdown once per second while it is active.
+    LaunchedEffect(lockoutUntilMillis) {
+        while (lockoutUntilMillis > nowMillis) {
+            delay(1_000)
+            nowMillis = System.currentTimeMillis()
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -264,20 +311,28 @@ fun DeviceLockScreenContent(
             onDismissRequest = {
                 showPinDialog = false
                 pinInput = ""
-                pinError = false
+                pinErrorText = null
             },
             title = { Text("Parent PIN Unlock") },
             text = {
                 Column {
-                    Text("Enter your 4-digit Parent Security PIN to temporarily resume device access.")
+                    Text("Enter your 4 to 6 digit Parent Security PIN to temporarily resume device access.")
                     Spacer(modifier = Modifier.height(12.dp))
                     OutlinedTextField(
                         value = pinInput,
-                        onValueChange = { if (it.length <= 6) pinInput = it },
+                        onValueChange = { if (it.length <= 6 && it.all { c -> c.isDigit() }) pinInput = it },
                         label = { Text("PIN") },
                         visualTransformation = PasswordVisualTransformation(),
-                        isError = pinError,
-                        supportingText = if (pinError) { { Text("Incorrect PIN. Please try again.") } } else null,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        isError = pinErrorText != null,
+                        enabled = !lockedOut,
+                        supportingText = {
+                            when {
+                                lockedOut -> Text("Too many incorrect attempts. Try again in ${secondsRemaining}s.")
+                                pinErrorText != null -> Text(pinErrorText!!)
+                                else -> {}
+                            }
+                        },
                         singleLine = true
                     )
                 }
@@ -285,13 +340,24 @@ fun DeviceLockScreenContent(
             confirmButton = {
                 Button(
                     onClick = {
-                        val success = onParentPinUnlock(pinInput)
-                        if (success) {
-                            showPinDialog = false
-                        } else {
-                            pinError = true
+                        onParentPinUnlock(pinInput) { success, message ->
+                            if (success) {
+                                showPinDialog = false
+                                pinInput = ""
+                                pinErrorText = null
+                                failedAttempts = 0
+                                lockoutUntilMillis = 0L
+                            } else {
+                                pinErrorText = message
+                                failedAttempts++
+                                if (failedAttempts >= MAX_FAILED_ATTEMPTS) {
+                                    lockoutUntilMillis = System.currentTimeMillis() + LOCKOUT_MILLIS
+                                    failedAttempts = 0
+                                }
+                            }
                         }
-                    }
+                    },
+                    enabled = !lockedOut
                 ) {
                     Text("Unlock")
                 }
@@ -304,4 +370,3 @@ fun DeviceLockScreenContent(
         )
     }
 }
-

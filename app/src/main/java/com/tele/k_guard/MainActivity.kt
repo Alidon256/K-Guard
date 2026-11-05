@@ -8,6 +8,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import com.tele.k_guard.ui.navigation.AppNavigation
@@ -15,7 +16,18 @@ import com.tele.k_guard.ui.theme.KGuardTheme
 
 class MainActivity : ComponentActivity() {
 
+    // targetRouteId increments on every intent carrying a route, so AppNavigation's
+    // LaunchedEffect re-fires even for repeat taps of the same route.
     private val targetRoute = mutableStateOf<String?>(null)
+    private val targetRouteId = mutableIntStateOf(0)
+
+    private fun applyIntentRoute(intent: Intent?) {
+        val route = intent?.getStringExtra("navigate_to")
+        if (route != null) {
+            targetRoute.value = route
+            targetRouteId.intValue++
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -23,7 +35,7 @@ class MainActivity : ComponentActivity() {
         DebugPreview.init(this, intent.getStringExtra("demo_route"), intent.getIntExtra("demo_tab", 0))
         com.tele.k_guard.service.KGuardMessagingService.ensureChannel(this)
 
-        targetRoute.value = intent.getStringExtra("navigate_to")
+        applyIntentRoute(intent)
 
         setContent {
             KGuardTheme {
@@ -31,7 +43,11 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    AppNavigation(targetRoute = targetRoute.value)
+                    AppNavigation(
+                        targetRoute = targetRoute.value,
+                        targetRouteId = targetRouteId.intValue,
+                        onTargetRouteConsumed = { targetRoute.value = null }
+                    )
                 }
             }
         }
@@ -40,6 +56,6 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        targetRoute.value = intent.getStringExtra("navigate_to")
+        applyIntentRoute(intent)
     }
 }

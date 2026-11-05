@@ -17,6 +17,11 @@ data class VpnConfig(
 class VpnConfigStore(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences("web_protection", Context.MODE_PRIVATE)
 
+    init {
+        // Every instance shares one set of state flows (see Shared below); hydrate them from prefs once.
+        Shared.initFrom(prefs)
+    }
+
     fun load(): VpnConfig = VpnConfig(
         enabled = prefs.getBoolean("enabled", false),
         childId = prefs.getString("childId", null),
@@ -38,7 +43,7 @@ class VpnConfigStore(context: Context) {
             .putString("age", child.ageProfile)
             .putString("rules", child.categoryRules.entries.joinToString(",") { "${it.key}=${it.value}" })
             .apply()
-        _customBlock.value = load().policy.customBlock
+        Shared._customBlock.value = load().policy.customBlock
     }
 
     fun setEnabled(enabled: Boolean) { prefs.edit().putBoolean("enabled", enabled).apply() }
@@ -47,8 +52,8 @@ class VpnConfigStore(context: Context) {
         val d = cleanDomain(domain) ?: return false
         val next = (load().policy.customBlock + d)
         prefs.edit().putStringSet("customBlock", next).putStringSet("customAllow", load().policy.customAllow - d).apply()
-        _customBlock.value = next
-        _customAllow.value = load().policy.customAllow
+        Shared._customBlock.value = next
+        Shared._customAllow.value = load().policy.customAllow
         return true
     }
 
@@ -56,20 +61,21 @@ class VpnConfigStore(context: Context) {
         val d = cleanDomain(domain) ?: return false
         val next = (load().policy.customAllow + d)
         prefs.edit().putStringSet("customAllow", next).putStringSet("customBlock", load().policy.customBlock - d).apply()
-        _customAllow.value = next
-        _customBlock.value = load().policy.customBlock
+        Shared._customAllow.value = next
+        Shared._customBlock.value = load().policy.customBlock
         return true
     }
 
     fun removeCustomAllow(domain: String) {
-        val next = load().policy.customAllow - domain
+        val d = cleanDomain(domain) ?: return // an invalid input can never match a stored, valid domain
+        val next = load().policy.customAllow - d
         prefs.edit().putStringSet("customAllow", next).apply()
-        _customAllow.value = next
+        Shared._customAllow.value = next
     }
 
     fun setEducationalAllow(on: Boolean) {
         prefs.edit().putBoolean("edu", on).apply()
-        _educational.value = on
+        Shared._educational.value = on
     }
 
     private fun cleanDomain(raw: String): String? {
@@ -78,19 +84,33 @@ class VpnConfigStore(context: Context) {
     }
 
     fun removeCustomBlock(domain: String) {
-        val next = load().policy.customBlock - domain
+        val d = cleanDomain(domain) ?: return // an invalid input can never match a stored, valid domain
+        val next = load().policy.customBlock - d
         prefs.edit().putStringSet("customBlock", next).apply()
-        _customBlock.value = next
+        Shared._customBlock.value = next
     }
 
-    private val _customBlock = MutableStateFlow(load().policy.customBlock)
-    val customBlock: StateFlow<Set<String>> = _customBlock.asStateFlow()
-    private val _customAllow = MutableStateFlow(load().policy.customAllow)
-    val customAllow: StateFlow<Set<String>> = _customAllow.asStateFlow()
-    private val _educational = MutableStateFlow(load().policy.educationalAllow)
-    val educationalAllow: StateFlow<Boolean> = _educational.asStateFlow()
+    val customBlock: StateFlow<Set<String>> get() = Shared._customBlock
+    val customAllow: StateFlow<Set<String>> get() = Shared._customAllow
+    val educationalAllow: StateFlow<Boolean> get() = Shared._educational
 
-    private companion object {
+    /**
+     * One shared, app-wide state for every VpnConfigStore instance: the service and the settings
+     * screens must observe the same values, not per-instance copies that drift apart.
+     */
+    private companion object Shared {
+        val _customBlock = MutableStateFlow<Set<String>>(emptySet())
+        val _customAllow = MutableStateFlow<Set<String>>(emptySet())
+        val _educational = MutableStateFlow(true)
+
+        fun initFrom(prefs: android.content.SharedPreferences) {
+            synchronized(this) {
+                _customBlock.value = prefs.getStringSet("customBlock", emptySet()) ?: emptySet()
+                _customAllow.value = prefs.getStringSet("customAllow", emptySet()) ?: emptySet()
+                _educational.value = prefs.getBoolean("edu", true)
+            }
+        }
+
         val DOMAIN = Regex("^([a-z0-9]([a-z0-9-]*[a-z0-9])?\\.)+[a-z]{2,}$")
     }
 }

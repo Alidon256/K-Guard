@@ -24,19 +24,28 @@ class SafeSearchTest {
         }
     }
 
-    @Test fun youtubeBingAndDuckDuckGoGoToTheirSafeHosts() {
-        for (host in listOf("www.youtube.com", "m.youtube.com", "youtubei.googleapis.com", "youtube.googleapis.com", "www.youtube-nocookie.com")) {
+    @Test fun youtubeAndBingGoToTheirSafeHosts() {
+        for (host in listOf(
+            "www.youtube.com", "m.youtube.com", "youtubei.googleapis.com", "youtube.googleapis.com",
+            "www.youtube-nocookie.com", "youtube.com", "music.youtube.com", "youtube-nocookie.com"
+        )) {
             assertEquals(host, SafeSearch.YOUTUBE, SafeSearch.targetFor(host, AgeProfile.PRETEENS_8_12))
         }
-        assertEquals(SafeSearch.BING, SafeSearch.targetFor("www.bing.com", teen))
-        assertEquals(SafeSearch.DUCKDUCKGO, SafeSearch.targetFor("duckduckgo.com", teen))
-        assertEquals(SafeSearch.DUCKDUCKGO, SafeSearch.targetFor("www.duckduckgo.com", teen))
+        for (host in listOf("www.bing.com", "bing.com")) {
+            assertEquals(host, SafeSearch.BING, SafeSearch.targetFor(host, teen))
+        }
         assertNull(SafeSearch.targetFor("restrict.youtube.com", teen)) // the target itself is never rewritten
     }
 
+    @Test fun duckDuckGoIsNotRewrittenBecauseItHasNoDnsSafeHost() {
+        assertNull(SafeSearch.targetFor("duckduckgo.com", teen))
+        assertNull(SafeSearch.targetFor("www.duckduckgo.com", teen))
+    }
+
     @Test fun adultsAreNotRewritten() {
-        assertNull(SafeSearch.targetFor("www.google.com", AgeProfile.ADULTS_18_PLUS))
-        assertNull(SafeSearch.targetFor("www.youtube.com", AgeProfile.ADULTS_18_PLUS))
+        for (host in listOf("www.google.com", "www.youtube.com", "youtube.com", "music.youtube.com", "bing.com", "www.bing.com")) {
+            assertNull(host, SafeSearch.targetFor(host, AgeProfile.ADULTS_18_PLUS))
+        }
     }
 
     @Test fun builtQueriesParseBack() {

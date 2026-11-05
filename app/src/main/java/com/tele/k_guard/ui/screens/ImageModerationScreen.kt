@@ -50,6 +50,7 @@ fun ImageModerationScreen(
     viewModel: ImageModerationViewModel,
     activeAgeProfile: AgeProfile,
     activeChildId: String?,
+    profileLoaded: Boolean = true,
     onNavigateBack: () -> Unit
 ) {
     val context = LocalContext.current
@@ -66,6 +67,7 @@ fun ImageModerationScreen(
         selectedImageUri = selectedImageUri,
         uiState = uiState,
         activeAgeProfile = activeAgeProfile,
+        profileLoaded = profileLoaded,
         onPickImage = { imagePickerLauncher.launch("image/*") },
         onSubmit = { viewModel.submitImageForModeration(context, activeChildId) },
         onReset = { viewModel.resetState() },
@@ -78,6 +80,7 @@ fun ImageModerationContent(
     selectedImageUri: Uri?,
     uiState: ModerationUiState,
     activeAgeProfile: AgeProfile,
+    profileLoaded: Boolean = true,
     onPickImage: () -> Unit,
     onSubmit: () -> Unit,
     onReset: () -> Unit,
@@ -105,11 +108,13 @@ fun ImageModerationContent(
                 fontWeight = FontWeight.Bold
             )
             Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = "Evaluating under profile: ${activeAgeProfile.title}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary
-            )
+            if (profileLoaded) {
+                Text(
+                    text = "Evaluating under profile: ${activeAgeProfile.title}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
 
             Spacer(modifier = Modifier.height(16.dp))
 

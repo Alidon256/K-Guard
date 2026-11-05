@@ -2,6 +2,7 @@ package com.tele.k_guard.data.repository
 
 import android.content.Context
 import android.net.Uri
+import android.provider.OpenableColumns
 import com.google.firebase.FirebaseNetworkException
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.functions.FirebaseFunctions
@@ -32,12 +33,30 @@ class ModerationRepository(
         withContext(Dispatchers.IO) {
             val uid = FirebaseAuth.getInstance().currentUser?.uid
                 ?: return@withContext Result.failure(IllegalStateException("Please sign in first."))
-            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            // Check the declared size BEFORE reading so an oversized image is rejected without
+            // loading it into memory (a full read of a huge image can exhaust the heap).
+            val declaredSize = imageReportedSize(context, uri)
+            if (declaredSize != null && declaredSize > MAX_IMAGE_BYTES) {
+                return@withContext Result.failure(IllegalStateException("That image is larger than 8 MB."))
+            }
+            val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
+                // Read with a hard cap in case the provider reported no size or a wrong one.
+                val output = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(64 * 1024)
+                var total = 0
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read == -1) break
+                    total += read
+                    if (total > MAX_IMAGE_BYTES) {
+                        return@withContext Result.failure(IllegalStateException("That image is larger than 8 MB."))
+                    }
+                    output.write(buffer, 0, read)
+                }
+                output.toByteArray()
+            }
             if (bytes == null || bytes.isEmpty()) {
                 return@withContext Result.failure(IllegalStateException("Unable to read the selected image."))
-            }
-            if (bytes.size > MAX_IMAGE_BYTES) {
-                return@withContext Result.failure(IllegalStateException("That image is larger than 8 MB."))
             }
             val mime = context.contentResolver.getType(uri)?.takeIf { it.startsWith("image/") } ?: "image/jpeg"
             val path = "users/$uid/uploads/${UUID.randomUUID()}"
@@ -69,6 +88,21 @@ class ModerationRepository(
         Result.success(unavailable())
     } catch (e: Exception) {
         Result.success(unavailable())
+    }
+
+    /** Best-effort size of the content without opening a full stream; null when unknown. */
+    private fun imageReportedSize(context: Context, uri: Uri): Long? = try {
+        context.contentResolver
+            .query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)
+            ?.use { cursor ->
+                val idx = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (idx >= 0 && cursor.moveToFirst() && !cursor.isNull(idx)) cursor.getLong(idx) else null
+            }
+            ?: context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { afd ->
+                afd.length.takeIf { it >= 0 }
+            }
+    } catch (e: Exception) {
+        null
     }
 
     private fun parse(m: Map<String, Any?>) = ModerationResponse(

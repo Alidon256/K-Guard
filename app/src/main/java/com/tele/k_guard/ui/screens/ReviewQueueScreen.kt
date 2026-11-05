@@ -27,7 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,9 +68,26 @@ fun ReviewQueueContent(
     onReview: (String, ParentAction, String) -> Unit,
     onNavigateBack: () -> Unit
 ) {
-    var onlyOpen by remember { mutableStateOf(true) }
-    var childFilter by remember { mutableStateOf<String?>(null) }
-    var pending by remember { mutableStateOf<Pair<SafetyEvent, ParentAction>?>(null) }
+    // Filters and the in-progress review survive rotation (rememberSaveable, not remember).
+    var onlyOpen by rememberSaveable { mutableStateOf(true) }
+    var childFilter by rememberSaveable { mutableStateOf<String?>(null) }
+    // The pending action is stored as plain ids so it survives configuration changes;
+    // the SafetyEvent itself is resolved from the live list.
+    var pendingEventId by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingActionId by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingNote by rememberSaveable { mutableStateOf("") }
+
+    fun clearPending() {
+        pendingEventId = null
+        pendingActionId = null
+        pendingNote = ""
+    }
+
+    val pending: Pair<SafetyEvent, ParentAction>? = pendingEventId?.let { eid ->
+        val event = events.find { it.id == eid } ?: return@let null
+        val action = ParentAction.entries.find { it.id == pendingActionId } ?: return@let null
+        event to action
+    }
 
     val shown = events.filter { (!onlyOpen || it.isOpen) && (childFilter == null || it.childId == childFilter) }
 
@@ -102,7 +119,7 @@ fun ReviewQueueContent(
             } else {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(shown, key = { it.id }) { ev ->
-                        EventCard(ev, onAction = { pending = ev to it })
+                        EventCard(ev, onAction = { action -> pendingEventId = ev.id; pendingActionId = action.id })
                     }
                 }
             }
@@ -110,23 +127,24 @@ fun ReviewQueueContent(
     }
 
     pending?.let { (ev, action) ->
-        var note by remember(ev.id) { mutableStateOf("") }
         AlertDialog(
-            onDismissRequest = { pending = null },
+            onDismissRequest = { clearPending() },
             title = { Text(action.label) },
             text = {
                 Column {
                     Text("Add an optional note for your records (visible only to parents).")
                     OutlinedTextField(
-                        value = note,
-                        onValueChange = { note = it.take(300) },
+                        value = pendingNote,
+                        onValueChange = { pendingNote = it.take(300) },
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                         shape = RoundedCornerShape(12.dp)
                     )
                 }
             },
-            confirmButton = { TextButton(onClick = { onReview(ev.id, action, note); pending = null }) { Text("Confirm") } },
-            dismissButton = { TextButton(onClick = { pending = null }) { Text("Cancel") } }
+            confirmButton = {
+                TextButton(onClick = { onReview(ev.id, action, pendingNote); clearPending() }) { Text("Confirm") }
+            },
+            dismissButton = { TextButton(onClick = { clearPending() }) { Text("Cancel") } }
         )
     }
 }
