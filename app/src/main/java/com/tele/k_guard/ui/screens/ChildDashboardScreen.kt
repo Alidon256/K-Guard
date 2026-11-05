@@ -19,7 +19,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -39,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import com.tele.k_guard.data.model.ChildProfile
 import com.tele.k_guard.ui.components.KGuardTopAppBar
 import com.tele.k_guard.ui.theme.KGuardTheme
+import com.tele.k_guard.ui.components.KGuardLogo
 
 @Composable
 fun ChildDashboardScreen(
@@ -79,20 +79,7 @@ fun ChildDashboardScreen(
                     modifier = Modifier.padding(20.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Shield,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(28.dp)
-                        )
-                    }
+                KGuardLogo(modifier = Modifier.size(48.dp))
                     Spacer(modifier = Modifier.width(16.dp))
                     Column {
                         Text(

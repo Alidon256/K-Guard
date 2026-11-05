@@ -30,7 +30,6 @@ import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Password
-import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -67,6 +66,7 @@ import com.tele.k_guard.data.repository.UserPreferencesRepository
 import com.tele.k_guard.ui.theme.KGuardTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import com.tele.k_guard.ui.components.KGuardLogo
 
 /**
  * Fullscreen lock activity displayed on the child's phone when switched off or locked remotely.
@@ -194,7 +194,7 @@ fun DeviceLockScreenContent(
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(Icons.Default.Shield, contentDescription = null, tint = Color(0xFF60A5FA), modifier = Modifier.size(20.dp))
+            KGuardLogo(modifier = Modifier.size(24.dp))
             Spacer(modifier = Modifier.width(8.dp))
             Text(
                 text = "K-Guard Child Protection",

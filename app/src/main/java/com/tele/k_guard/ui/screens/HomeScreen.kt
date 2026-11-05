@@ -24,7 +24,6 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -45,6 +44,8 @@ import androidx.compose.ui.unit.dp
 import com.tele.k_guard.data.model.AgeProfile
 import com.tele.k_guard.ui.components.KGuardTopAppBar
 import com.tele.k_guard.ui.theme.KGuardTheme
+import androidx.compose.material.icons.filled.Public
+import com.tele.k_guard.ui.components.KGuardLogo
 
 @Composable
 fun HomeScreen(
@@ -175,7 +176,7 @@ fun HomeScreen(
             DashboardToolCard(
                 title = "Web Protection (VPN)",
                 description = "Block harmful websites in every browser and app on this phone.",
-                icon = Icons.Default.Shield,
+                icon = Icons.Default.Public,
                 badgeColor = Color(0xFF00897B),
                 onClick = onNavigateToWebProtection
             )
@@ -226,12 +227,7 @@ fun HomeScreen(
                     modifier = Modifier.padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Shield,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(24.dp)
-                    )
+                    KGuardLogo(modifier = Modifier.size(28.dp))
                     Spacer(modifier = Modifier.width(12.dp))
                     Text(
                         text = "K-Guard combines Screen Time, App Control, and AI Content Moderation for complete digital family safety.",
