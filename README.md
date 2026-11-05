@@ -310,6 +310,8 @@ Defaults: ages 3–12 block every listed category; teens block sexual, drugs, ha
 Parent rules apply: `Block` always blocks. `Allow` is honoured except for sexual content under 18. `Warn`/`Blur` cannot be shown at DNS level, so they behave as allow.
 Parents may also add custom blocked domains.
 
+**Safe modes.** For profiles under 18, lookups for Google (including country domains such as `google.co.ug`), YouTube, Bing and DuckDuckGo are answered with a CNAME to the vendor's own enforcement host, so SafeSearch and YouTube Restricted Mode are locked on in every browser and app: `forcesafesearch.google.com`, `restrict.youtube.com`, `strict.bing.com` and `safe.duckduckgo.com`. The CNAME is followed by the target's real addresses, resolved upstream. HTTPS/SVCB lookups for those names get an empty answer so a browser cannot skip the rewrite, and if the safe host cannot be resolved the lookup goes unanswered instead of falling back to the normal site. Adult profiles are not rewritten. YouTube always uses strict Restricted Mode, because the teen profile spans 13 to 17. Code: `vpn/SafeSearch.kt` and the CNAME helpers in `vpn/DnsPacket.kt`. Browsers with their own encrypted DNS can still bypass it, as noted below.
+
 **Intervene.** A blocked lookup is reported through the `reportWebBlock` function, which records an event and notifies parents per their
 privacy settings. The domain is stored only if "store excerpts" is on. Reports are throttled per domain.
 

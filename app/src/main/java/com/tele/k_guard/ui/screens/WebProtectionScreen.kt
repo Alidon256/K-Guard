@@ -46,6 +46,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.tele.k_guard.data.model.AgeProfile
 import com.tele.k_guard.data.model.CategoryRule
 import com.tele.k_guard.data.model.ChildProfile
 import com.tele.k_guard.data.model.ParentAction
@@ -158,6 +159,9 @@ private fun StatusTab(session: SessionViewModel, store: VpnConfigStore) {
                 if (running) OutlinedButton(onClick = { KGuardVpnService.stop(context) }) { Text("Turn off") }
                 else Button(onClick = { turnOn() }, enabled = child != null) { Text("Turn on web protection") }
                 if (running) Text("$blocked site(s) blocked this session", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
+                if (running && child?.age != AgeProfile.ADULTS_18_PLUS) {
+                    Text("Safe search and YouTube Restricted Mode are on.", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 4.dp))
+                }
             }
         }
 
