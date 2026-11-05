@@ -23,11 +23,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.tele.k_guard.data.model.AgeProfile
 import com.tele.k_guard.data.model.ModerationUiState
 import com.tele.k_guard.ui.components.KGuardTopAppBar
 import com.tele.k_guard.ui.components.ModerationResultCard
+import com.tele.k_guard.ui.theme.KGuardTheme
 import com.tele.k_guard.viewmodel.TextModerationViewModel
 
 @Composable
@@ -40,6 +42,27 @@ fun TextModerationScreen(
     val inputText by viewModel.inputText.collectAsState()
     val uiState by viewModel.uiState.collectAsState()
 
+    TextModerationContent(
+        inputText = inputText,
+        uiState = uiState,
+        activeAgeProfile = activeAgeProfile,
+        onInputTextChange = { viewModel.updateInputText(it) },
+        onSubmit = { viewModel.submitTextForModeration(activeChildId) },
+        onReset = { viewModel.resetState() },
+        onNavigateBack = onNavigateBack
+    )
+}
+
+@Composable
+fun TextModerationContent(
+    inputText: String,
+    uiState: ModerationUiState,
+    activeAgeProfile: AgeProfile,
+    onInputTextChange: (String) -> Unit,
+    onSubmit: () -> Unit,
+    onReset: () -> Unit,
+    onNavigateBack: () -> Unit
+) {
     Scaffold(
         topBar = {
             KGuardTopAppBar(
@@ -72,7 +95,7 @@ fun TextModerationScreen(
 
             OutlinedTextField(
                 value = inputText,
-                onValueChange = { viewModel.updateInputText(it) },
+                onValueChange = onInputTextChange,
                 label = { Text("Input message or comment") },
                 modifier = Modifier
                     .fillMaxWidth()
@@ -83,7 +106,7 @@ fun TextModerationScreen(
             Spacer(modifier = Modifier.height(12.dp))
 
             Button(
-                onClick = { viewModel.submitTextForModeration(activeChildId) },
+                onClick = onSubmit,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(48.dp),
@@ -134,7 +157,7 @@ fun TextModerationScreen(
                         isImage = false
                     )
                     TextButton(
-                        onClick = { viewModel.resetState() },
+                        onClick = onReset,
                         modifier = Modifier.align(Alignment.End)
                     ) {
                         Text("Clear & Evaluate New Text")
@@ -149,5 +172,21 @@ fun TextModerationScreen(
                 }
             }
         }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+fun TextModerationScreenPreview() {
+    KGuardTheme {
+        TextModerationContent(
+            inputText = "You are ugly and nobody likes you",
+            uiState = ModerationUiState.Idle,
+            activeAgeProfile = AgeProfile.PRETEENS_8_12,
+            onInputTextChange = {},
+            onSubmit = {},
+            onReset = {},
+            onNavigateBack = {}
+        )
     }
 }

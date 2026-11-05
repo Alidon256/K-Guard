@@ -44,13 +44,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.tele.k_guard.data.model.CategoryRule
+import com.tele.k_guard.data.model.ChildProfile
 import com.tele.k_guard.data.model.ParentAction
 import com.tele.k_guard.data.model.SafetyCategory
 import com.tele.k_guard.data.model.SafetyEvent
 import com.tele.k_guard.ui.components.DecisionBadge
 import com.tele.k_guard.ui.components.KGuardTopAppBar
+import com.tele.k_guard.ui.theme.KGuardTheme
 import com.tele.k_guard.viewmodel.SessionViewModel
 import com.tele.k_guard.vpn.DomainFilter
 import com.tele.k_guard.vpn.KGuardVpnService
@@ -70,11 +73,28 @@ fun WebProtectionScreen(session: SessionViewModel, onNavigateBack: () -> Unit) {
     val store = remember { VpnConfigStore(context) }
     val child by session.selectedChild.collectAsState()
     val events by session.events.collectAsState()
-    var tab by remember { mutableIntStateOf(com.tele.k_guard.DebugPreview.webTab) }
 
     // Keep the service's copy of the child's age group and rules current.
     LaunchedEffect(child) { child?.let { store.applyChild(it) } }
 
+    WebProtectionContent(
+        session = session,
+        store = store,
+        child = child,
+        events = events,
+        onNavigateBack = onNavigateBack
+    )
+}
+
+@Composable
+fun WebProtectionContent(
+    session: SessionViewModel,
+    store: VpnConfigStore,
+    child: ChildProfile?,
+    events: List<SafetyEvent>,
+    onNavigateBack: () -> Unit
+) {
+    var tab by remember { mutableIntStateOf(runCatching { com.tele.k_guard.DebugPreview.webTab }.getOrDefault(0)) }
     val openWeb = events.count { it.contentType == "web" && it.isOpen }
 
     Scaffold(topBar = { KGuardTopAppBar("Web Protection", canNavigateBack = true, onNavigateBack = onNavigateBack) }) { padding ->
@@ -105,7 +125,7 @@ private fun StatusTab(session: SessionViewModel, store: VpnConfigStore) {
     val child by session.selectedChild.collectAsState()
     val running by VpnState.running.collectAsState()
     val blocked by VpnState.blockedCount.collectAsState()
-    val filter = remember { DomainFilter.load(context) }
+    val filter = remember { runCatching { DomainFilter.load(context) }.getOrNull() }
 
     val consent = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) KGuardVpnService.start(context)
@@ -117,7 +137,7 @@ private fun StatusTab(session: SessionViewModel, store: VpnConfigStore) {
     }
 
     var site by remember { mutableStateOf("") }
-    var checked by remember { mutableStateOf<Pair<String, String>?>(null) } // domain to explanation + decision marker
+    var checked by remember { mutableStateOf<Pair<String, String>?>(null) }
     var siteBlocked by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
@@ -147,12 +167,13 @@ private fun StatusTab(session: SessionViewModel, store: VpnConfigStore) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(site, { site = it; checked = null }, label = { Text("example.com") }, singleLine = true, modifier = Modifier.weight(1f))
             Button(
-                enabled = site.isNotBlank() && child != null,
+                enabled = site.isNotBlank() && child != null && filter != null,
                 onClick = {
                     val c = child ?: return@Button
+                    val f = filter ?: return@Button
                     val policy = store.load().policy.copy(ageProfile = c.age, rules = c.categoryRules)
                     val domain = site.trim().removePrefix("https://").removePrefix("http://").substringBefore('/')
-                    val v = filter.evaluate(domain, policy)
+                    val v = f.evaluate(domain, policy)
                     siteBlocked = v.blocked
                     checked = domain to DomainFilter.explain(v, policy)
                 }
@@ -196,7 +217,7 @@ private fun CategoriesTab(session: SessionViewModel, store: VpnConfigStore) {
     val customBlock by store.customBlock.collectAsState()
     val customAllow by store.customAllow.collectAsState()
     val edu by store.educationalAllow.collectAsState()
-    val filter = remember { DomainFilter.load(context) }
+    val filter = remember { runCatching { DomainFilter.load(context) }.getOrNull() }
     val busy by session.busy.collectAsState()
     var blockInput by remember { mutableStateOf("") }
     var allowInput by remember { mutableStateOf("") }
@@ -226,13 +247,14 @@ private fun CategoriesTab(session: SessionViewModel, store: VpnConfigStore) {
             val eff = DomainFilter.effective(cat, policy)
             val current = CategoryRule.fromId(c.categoryRules[cat.id])
             val shown = when (current) { CategoryRule.BLOCK -> "Block"; CategoryRule.ALLOW -> if (eff.source == Source.LOCKED) "Block" else "Allow"; null -> "Default"; else -> "Default" }
+            val count = filter?.listSize(cat) ?: 0
             Card(Modifier.fillMaxWidth().padding(vertical = 4.dp), shape = RoundedCornerShape(12.dp)) {
                 Column(Modifier.padding(12.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(cat.label, fontWeight = FontWeight.SemiBold)
                             Text(
-                                "${filter.listSize(cat)} site(s) listed" + when (eff.source) {
+                                "$count site(s) listed" + when (eff.source) {
                                     Source.AGE -> " · age default"; Source.RULE -> " · parent rule"; Source.LOCKED -> " · locked under 18"
                                 },
                                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -367,5 +389,74 @@ private fun WebAlertCard(ev: SafetyEvent, session: SessionViewModel, store: VpnC
                 Text("Reviewed: " + (ParentAction.entries.find { it.id == ev.parentAction }?.label ?: "done"), color = GREEN, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 6.dp))
             }
         }
+    }
+}
+
+@Composable
+fun WebProtectionStatusContent(
+    running: Boolean,
+    blockedCount: Int,
+    childName: String?,
+    childAgeRange: String?,
+    onTurnOn: () -> Unit,
+    onTurnOff: () -> Unit,
+    onNavigateBack: () -> Unit
+) {
+    var site by remember { mutableStateOf("") }
+
+    Scaffold(topBar = { KGuardTopAppBar("Web Protection", canNavigateBack = true, onNavigateBack = onNavigateBack) }) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState())) {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (running) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Text(if (running) "Protection is on" else "Protection is off", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text(
+                        if (childName != null) "Protecting $childName ($childAgeRange) with this profile's age group and category rules."
+                        else "Add a child profile first, so K-Guard knows which rules to apply.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    if (running) OutlinedButton(onClick = onTurnOff) { Text("Turn off") }
+                    else Button(onClick = onTurnOn, enabled = childName != null) { Text("Turn on web protection") }
+                    if (running) Text("$blockedCount site(s) blocked this session", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+            Text("Check a site", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("See what K-Guard would do for this profile, and why.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(site, { site = it }, label = { Text("example.com") }, singleLine = true, modifier = Modifier.weight(1f))
+                Button(enabled = site.isNotBlank() && childName != null, onClick = {}) { Text("Check") }
+            }
+
+            Spacer(Modifier.height(20.dp)); HorizontalDivider(); Spacer(Modifier.height(12.dp))
+            Text("How it works", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text(
+                "K-Guard sets up a private connection on this phone that checks website names only. Harmful sites are blocked in every browser and app. " +
+                    "Nothing is sent to a K-Guard server, and K-Guard cannot see pages, messages or photos. Use the Text and Image checkers for content.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+fun WebProtectionScreenPreview() {
+    KGuardTheme {
+        WebProtectionStatusContent(
+            running = true,
+            blockedCount = 3,
+            childName = "Alex",
+            childAgeRange = "Ages 8 – 12",
+            onTurnOn = {},
+            onTurnOff = {},
+            onNavigateBack = {}
+        )
     }
 }
