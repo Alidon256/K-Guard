@@ -25,14 +25,24 @@ class AppInstallBroadcastReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         if (intent == null || intent.action != Intent.ACTION_PACKAGE_ADDED) return
 
+        // PACKAGE_ADDED also fires for app updates; only process fresh installs.
+        if (intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)) return
+
         val uri = intent.data ?: return
         val packageName = uri.schemeSpecificPart ?: return
 
         // Ignore our own package
         if (packageName == context.packageName) return
 
-        val scope = CoroutineScope(Dispatchers.IO)
-        scope.launch {
+        // Filing approval requests needs a signed-in family; skip silently otherwise.
+        if (FamilyRepository.currentUser == null) {
+            Log.i("KGuardAppInstall", "Skipping package install for $packageName: no signed-in user")
+            return
+        }
+
+        // Keep the broadcast alive until the async work completes.
+        val result = goAsync()
+        CoroutineScope(Dispatchers.IO).launch {
             try {
                 val prefs = UserPreferencesRepository(context)
                 val activeChildId = prefs.activeChildIdFlow.firstOrNull()
@@ -79,6 +89,8 @@ class AppInstallBroadcastReceiver : BroadcastReceiver() {
                 }
             } catch (e: Exception) {
                 Log.e("KGuardAppInstall", "Error processing package install: $packageName", e)
+            } finally {
+                result.finish()
             }
         }
     }

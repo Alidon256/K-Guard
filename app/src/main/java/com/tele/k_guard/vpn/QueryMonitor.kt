@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.text.SimpleDateFormat
 import java.util.Locale
+import java.util.TimeZone
 
 /**
  * Watches every DNS lookup that passes through [KGuardVpnService] and flags the ones that match a category list.
@@ -40,7 +41,10 @@ object QueryMonitor {
     private const val TAG = "KGuardDNS"
 
     private var prefs: SharedPreferences? = null
-    private val dayFormat = SimpleDateFormat("yyyyMMdd", Locale.US) // only used inside synchronized methods
+    // UTC-fixed day keys: a timezone change or travel must not distort or duplicate a day's counts.
+    private val dayFormat = SimpleDateFormat("yyyyMMdd", Locale.US).apply {
+        timeZone = TimeZone.getTimeZone("UTC")
+    } // only used inside synchronized methods
     private var dayKey = ""
     private var handler: Handler? = null
     private var flushPending = false
@@ -56,6 +60,7 @@ object QueryMonitor {
     @Volatile var debug = false
         private set
 
+    /** Idempotent: safe to call from every entry point (service, UI card); the first call wins. */
     @Synchronized
     fun init(context: Context) {
         if (prefs != null) return
@@ -98,7 +103,8 @@ object QueryMonitor {
     fun flush() {
         val p = prefs ?: return
         flushPending = false
-        val cutoff = keyDaysAgo(KEEP_DAYS)
+        // Keep exactly KEEP_DAYS days: today plus the KEEP_DAYS-1 days before it.
+        val cutoff = keyDaysAgo(KEEP_DAYS - 1)
         val edit = p.edit().putString(dayKey, _today.value.encode())
         p.all.keys.filter { it.length == 8 && it.all(Char::isDigit) && it < cutoff }.forEach { edit.remove(it) }
         edit.apply()

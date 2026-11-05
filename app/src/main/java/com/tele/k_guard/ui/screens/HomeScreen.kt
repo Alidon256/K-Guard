@@ -114,7 +114,7 @@ fun HomeScreen(
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = if (activeChildName != null) "Protecting $activeChildName" else "No child profile yet — tap to add one",
+                            text = if (activeChildName != null) "Protecting $activeChildName" else "No child profile yet — tap to set your age profile",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                         )

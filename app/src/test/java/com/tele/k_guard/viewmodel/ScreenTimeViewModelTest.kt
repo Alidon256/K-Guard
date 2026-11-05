@@ -20,6 +20,12 @@ class ScreenTimeViewModelTest {
 
     @Before
     fun setUp() {
+        // ParentalControlsRepository is a singleton object with mutable demo state and no reset —
+        // restore the pristine demo data before each test so tests are order-independent.
+        repository.resetDemoData()
+
+        // Drive the ViewModel on a synchronous Unconfined scope so the Eagerly-started
+        // stateIn streams and launched coroutines complete before assertions run.
         val testScope = CoroutineScope(Dispatchers.Unconfined)
         viewModel = ScreenTimeViewModel(repository, testScope)
         viewModel.selectChild("c1", "Ama")
@@ -30,9 +36,10 @@ class ScreenTimeViewModelTest {
         val dev = viewModel.currentDevice.value
         assertEquals("c1", dev.childId)
         assertEquals("Ama", dev.childName)
-        assertEquals("Samsung Galaxy A14 5G", dev.deviceModel)
+        assertEquals("Pixel 7", dev.deviceModel)
         assertTrue(dev.isOnline)
-        assertEquals(78, dev.batteryPercent)
+        assertEquals(85, dev.batteryPercent)
+        assertFalse(dev.isCharging)
         assertEquals(DeviceLockState.ACTIVE_UNLOCKED, dev.lockState)
     }
 
@@ -42,9 +49,9 @@ class ScreenTimeViewModelTest {
         val dev = viewModel.currentDevice.value
         assertEquals("c2", dev.childId)
         assertEquals("Kofi", dev.childName)
-        assertEquals("Google Pixel 6a", dev.deviceModel)
-        assertEquals(42, dev.batteryPercent)
-        assertTrue(dev.isCharging)
+        assertEquals("Galaxy Tab", dev.deviceModel)
+        assertEquals(85, dev.batteryPercent)
+        assertFalse(dev.isCharging)
     }
 
     @Test
@@ -65,6 +72,7 @@ class ScreenTimeViewModelTest {
         assertEquals(RemoteAction.SWITCH_OFF_LOCK, latestCmd?.action)
         assertEquals("c1", latestCmd?.childId)
         assertEquals(reason, latestCmd?.reason)
+        assertEquals("Sent", latestCmd?.status)
     }
 
     @Test
@@ -94,6 +102,16 @@ class ScreenTimeViewModelTest {
 
         val latestCmd = viewModel.commandHistory.value.firstOrNull()
         assertEquals(RemoteAction.ADD_BONUS_TIME, latestCmd?.action)
+    }
+
+    @Test
+    fun updateDailyLimitUsesSetDailyLimitAction() {
+        viewModel.selectChild("c1", "Ama")
+        viewModel.updateDailyLimit("c1", 75)
+
+        assertEquals(75, viewModel.currentDevice.value.dailyLimitMinutes)
+        val latestCmd = viewModel.commandHistory.value.firstOrNull()
+        assertEquals(RemoteAction.SET_DAILY_LIMIT, latestCmd?.action)
     }
 
     @Test
@@ -130,5 +148,24 @@ class ScreenTimeViewModelTest {
         assertEquals("08:00", dev2.schoolStart)
         assertEquals("15:00", dev2.schoolEnd)
         assertFalse(dev2.schoolEnabled)
+    }
+
+    @Test
+    fun clearFeedbackEmitsNullAndIdenticalMessagesRefire() {
+        viewModel.selectChild("c1", "Ama")
+        viewModel.remoteUnlock("c1")
+        val first = viewModel.actionFeedback.value
+        assertNotNull(first)
+        assertEquals("🟢 Unlocked & resumed Ama's phone", first?.message)
+
+        viewModel.clearFeedback()
+        assertEquals(null, viewModel.actionFeedback.value)
+
+        // An identical action produces a NEW id, so the UI can re-show the same message.
+        viewModel.remoteUnlock("c1")
+        val second = viewModel.actionFeedback.value
+        assertNotNull(second)
+        assertEquals(first?.message, second?.message)
+        assertTrue((second?.id ?: 0L) > (first?.id ?: 0L))
     }
 }

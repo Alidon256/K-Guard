@@ -1,6 +1,8 @@
 package com.tele.k_guard.ui.components
 
 import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -52,6 +54,24 @@ import coil3.compose.AsyncImage
 import com.tele.k_guard.data.model.AgeProfile
 import com.tele.k_guard.data.model.ModerationDecision
 import com.tele.k_guard.data.model.ModerationResponse
+
+/**
+ * Requests a runtime permission and reports the outcome via [onResult] (true = granted, false = denied).
+ * Returns the zero-arg action to invoke from a click handler.
+ * [onResult] defaults to a no-op so existing call sites that ignore the result keep compiling.
+ */
+@Composable
+fun RequestPermission(
+    permission: String,
+    onResult: (Boolean) -> Unit = {}
+): () -> Unit {
+    val launcher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        onResult(granted)
+    }
+    return { launcher.launch(permission) }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

@@ -56,6 +56,8 @@ class TextModerationViewModel(
     }
 
     fun resetState() {
+        // "Clear & Evaluate New Text" must clear the input too, not just the result.
+        _inputText.value = ""
         _uiState.value = ModerationUiState.Idle
     }
 }

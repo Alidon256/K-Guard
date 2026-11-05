@@ -23,6 +23,7 @@ enum class RemoteAction(val id: String, val label: String) {
     UNLOCK_DEVICE("unlock_device", "Unlock & Resume Device"),
     SOUND_ALARM("sound_alarm", "Play Loud Ring Alert"),
     ADD_BONUS_TIME("add_bonus_time", "Add Bonus Screen Time"),
+    SET_DAILY_LIMIT("set_daily_limit", "Set Daily Limit"),
     TOGGLE_BEDTIME("toggle_bedtime", "Toggle Bedtime Schedule"),
     TOGGLE_SCHOOL_MODE("toggle_school_mode", "Toggle School Mode")
 }

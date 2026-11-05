@@ -59,6 +59,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -133,10 +134,13 @@ fun AppManagementContent(
     onNavigateToAppDetail: (String) -> Unit = {},
     onNavigateBack: () -> Unit
 ) {
-    var selectedFilter by remember { mutableStateOf<AppApprovalStatus?>(null) }
-    var selectedChildId by remember { mutableStateOf<String?>(activeChild?.id) }
-    var showRequestDialog by remember { mutableStateOf(false) }
-    var editingAppLimit by remember { mutableStateOf<AppAccessInfo?>(null) }
+    var selectedFilter by rememberSaveable { mutableStateOf<AppApprovalStatus?>(null) }
+    // Keyed on the active child so a navigation to a different child can't surface a stale selection.
+    var selectedChildId by rememberSaveable(activeChild?.id) { mutableStateOf<String?>(activeChild?.id) }
+    var showRequestDialog by rememberSaveable { mutableStateOf(false) }
+    // Store the app id (saveable primitive) and derive the object, instead of holding an object.
+    var editingAppId by rememberSaveable { mutableStateOf<String?>(null) }
+    val editingAppLimit = managedApps.firstOrNull { it.id == editingAppId }
 
     val pendingCount = managedApps.count { it.approvalStatus == AppApprovalStatus.PENDING_REVIEW }
 
@@ -346,12 +350,13 @@ fun AppManagementContent(
                     modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    items(filteredApps, key = { it.id.ifEmpty { it.packageName } }) { app ->
+                    items(filteredApps, key = { "${it.packageName}-${it.hashCode()}" }) { app ->
                         ManagedAppCard(
                             app = app,
+                            busy = busy,
                             onApprove = { onApprove(app.id) },
                             onReject = { onReject(app.id) },
-                            onEditLimit = { editingAppLimit = app },
+                            onEditLimit = { editingAppId = app.id },
                             onNavigateToDetail = { onNavigateToAppDetail(app.id) }
                         )
                     }
@@ -374,12 +379,11 @@ fun AppManagementContent(
         )
     }
 
-    // Dialog for editing daily limit
-    if (editingAppLimit != null) {
-        val app = editingAppLimit!!
+    // Dialog for editing daily limit (state survives rotation via the saveable editingAppId)
+    editingAppLimit?.let { app ->
         var limitSlider by remember { mutableFloatStateOf(app.dailyLimitMinutes.toFloat()) }
         AlertDialog(
-            onDismissRequest = { editingAppLimit = null },
+            onDismissRequest = { editingAppId = null },
             title = { Text("Set Daily Limit for ${app.appName}") },
             text = {
                 Column {
@@ -397,13 +401,13 @@ fun AppManagementContent(
             confirmButton = {
                 Button(onClick = {
                     onUpdateLimit(app.id, limitSlider.toInt())
-                    editingAppLimit = null
+                    editingAppId = null
                 }) {
                     Text("Save Limit")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { editingAppLimit = null }) { Text("Cancel") }
+                TextButton(onClick = { editingAppId = null }) { Text("Cancel") }
             }
         )
     }
@@ -412,6 +416,7 @@ fun AppManagementContent(
 @Composable
 private fun ManagedAppCard(
     app: AppAccessInfo,
+    busy: Boolean = false,
     onApprove: () -> Unit,
     onReject: () -> Unit,
     onEditLimit: () -> Unit,
@@ -545,6 +550,7 @@ private fun ManagedAppCard(
                 if (app.approvalStatus != AppApprovalStatus.REJECTED) {
                     OutlinedButton(
                         onClick = onReject,
+                        enabled = !busy,
                         shape = RoundedCornerShape(10.dp),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFC62828)),
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 6.dp)
@@ -559,6 +565,7 @@ private fun ManagedAppCard(
                     Spacer(modifier = Modifier.width(6.dp))
                     Button(
                         onClick = onApprove,
+                        enabled = !busy,
                         shape = RoundedCornerShape(10.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 6.dp)

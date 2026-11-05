@@ -21,7 +21,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,10 +37,10 @@ import com.tele.k_guard.ui.theme.KGuardTheme
 fun ChildPinSetupScreen(
     onPinSaved: (String) -> Unit
 ) {
-    var pin by remember { mutableStateOf("") }
-    var confirmPin by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf<String?>(null) }
-    val isValid = pin.length >= 4 && pin == confirmPin
+    var pin by rememberSaveable { mutableStateOf("") }
+    var confirmPin by rememberSaveable { mutableStateOf("") }
+    var error by rememberSaveable { mutableStateOf<String?>(null) }
+    val isValid = pin.length >= 4
 
     Scaffold(
         topBar = { KGuardTopAppBar("Uninstall Protection PIN", canNavigateBack = false) }
@@ -107,12 +107,12 @@ fun ChildPinSetupScreen(
 
             Button(
                 onClick = {
-                    if (pin.length < 4) {
-                        error = "PIN must be at least 4 digits."
-                    } else if (pin != confirmPin) {
-                        error = "PINs do not match."
-                    } else {
-                        onPinSaved(pin)
+                    val weakReason = weakPinReason(pin)
+                    when {
+                        pin.length < 4 -> error = "PIN must be at least 4 digits."
+                        pin != confirmPin -> error = "PINs do not match."
+                        weakReason != null -> error = weakReason
+                        else -> onPinSaved(pin)
                     }
                 },
                 enabled = isValid,
@@ -123,6 +123,16 @@ fun ChildPinSetupScreen(
             }
         }
     }
+}
+
+/** Rejects guessable PINs: repeated digits and ascending/descending runs. */
+private fun weakPinReason(pin: String): String? {
+    if (pin.length < 4 || pin.length > 6) return null
+    if (pin.all { it == pin.first() }) return "PIN cannot use the same digit throughout (e.g. 1111)."
+    val digits = pin.map { it.code - '0'.code }
+    if (digits.zipWithNext().all { (a, b) -> b - a == 1 }) return "PIN cannot use sequential digits (e.g. 1234)."
+    if (digits.zipWithNext().all { (a, b) -> a - b == 1 }) return "PIN cannot use descending sequential digits (e.g. 4321)."
+    return null
 }
 
 @Preview(showBackground = true)

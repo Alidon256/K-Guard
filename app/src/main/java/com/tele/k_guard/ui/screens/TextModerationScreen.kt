@@ -37,6 +37,7 @@ fun TextModerationScreen(
     viewModel: TextModerationViewModel,
     activeAgeProfile: AgeProfile,
     activeChildId: String?,
+    profileLoaded: Boolean = true,
     onNavigateBack: () -> Unit
 ) {
     val inputText by viewModel.inputText.collectAsState()
@@ -46,6 +47,7 @@ fun TextModerationScreen(
         inputText = inputText,
         uiState = uiState,
         activeAgeProfile = activeAgeProfile,
+        profileLoaded = profileLoaded,
         onInputTextChange = { viewModel.updateInputText(it) },
         onSubmit = { viewModel.submitTextForModeration(activeChildId) },
         onReset = { viewModel.resetState() },
@@ -58,6 +60,7 @@ fun TextModerationContent(
     inputText: String,
     uiState: ModerationUiState,
     activeAgeProfile: AgeProfile,
+    profileLoaded: Boolean = true,
     onInputTextChange: (String) -> Unit,
     onSubmit: () -> Unit,
     onReset: () -> Unit,
@@ -85,11 +88,13 @@ fun TextModerationContent(
                 fontWeight = FontWeight.Bold
             )
             Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = "Evaluating against active profile: ${activeAgeProfile.title}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary
-            )
+            if (profileLoaded) {
+                Text(
+                    text = "Evaluating against active profile: ${activeAgeProfile.title}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
 
             Spacer(modifier = Modifier.height(12.dp))
 

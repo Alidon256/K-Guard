@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -15,11 +16,20 @@ import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import com.tele.k_guard.MainActivity
 import com.tele.k_guard.R
+import com.tele.k_guard.data.model.FamilyPrivacy
+import com.tele.k_guard.data.model.ModerationDecision
+import com.tele.k_guard.data.model.QuietHours
 import com.tele.k_guard.data.repository.FamilyRepository
+import com.tele.k_guard.ui.screens.DeviceLockActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import java.util.Calendar
+import java.util.SimpleTimeZone
+import java.util.concurrent.atomic.AtomicInteger
 
 /** Receives safety-alert & app-approval pushes for parents and keeps the device's FCM token registered. */
 class KGuardMessagingService : FirebaseMessagingService() {
@@ -30,20 +40,108 @@ class KGuardMessagingService : FirebaseMessagingService() {
         scope.launch { runCatching { FamilyRepository.registerPushToken(token) } }
     }
 
+    override fun onDestroy() {
+        scope.cancel()
+        super.onDestroy()
+    }
+
     override fun onMessageReceived(message: RemoteMessage) {
-        val title = message.notification?.title ?: message.data["title"] ?: "K-Guard alert"
-        val body = message.notification?.body ?: message.data["body"] ?: return
-        val type = message.data["type"]
-        val destinationRoute = if (type == "app_approval" || type == "app_approval_response") {
-            "app_management"
-        } else {
-            "review_queue"
+        val data = message.data
+
+        if (data["type"] == "remote_lock") {
+            handleRemoteLock(this, data)
+            return
         }
-        showAlert(this, title, body, destinationRoute)
+
+        val title = message.notification?.title ?: data["title"] ?: "K-Guard alert"
+        val rawBody = message.notification?.body ?: data["body"] ?: return
+        val familyId = data["familyId"]
+
+        if (familyId == null) {
+            Log.w(TAG, "No familyId in push payload; showing alert without privacy filtering")
+            showAlert(this, title, rawBody, destinationRoute(data["type"]))
+            return
+        }
+
+        scope.launch {
+            val privacy = runCatching { FamilyRepository.privacy(familyId).first() }.getOrNull()
+            if (privacy == null) {
+                Log.w(TAG, "Could not load privacy settings; showing alert (fail-open)")
+                showAlert(this@KGuardMessagingService, title, rawBody, destinationRoute(data["type"]))
+                return@launch
+            }
+
+            if (!passesPrivacyFilter(privacy, data["decision"])) return@launch
+
+            // includeSnippet gates whether flagged message content is displayed on the device.
+            val snippet = data["snippet"]
+            val body = if (snippet != null && !privacy.includeSnippet) {
+                "New safety alert — open K-Guard for details."
+            } else {
+                rawBody
+            }
+
+            showAlert(this@KGuardMessagingService, title, body, destinationRoute(data["type"]))
+        }
+    }
+
+    private fun destinationRoute(type: String?): String =
+        if (type == "app_approval" || type == "app_approval_response") "app_management" else "review_queue"
+
+    /**
+     * BLOCK decisions always show. Everything else obeys notifyOn, and quiet hours
+     * suppress all non-block alerts during the window.
+     */
+    private fun passesPrivacyFilter(privacy: FamilyPrivacy, decision: String?): Boolean {
+        val level = ModerationDecision.fromString(decision)
+        if (level == ModerationDecision.BLOCK) return true
+
+        val allowed = when (privacy.notifyOn) {
+            FamilyPrivacy.NOTIFY_ALL -> true
+            FamilyPrivacy.NOTIFY_WARN_AND_ABOVE -> level != ModerationDecision.ALLOW
+            FamilyPrivacy.NOTIFY_BLOCK_ONLY -> false
+            else -> level != ModerationDecision.ALLOW
+        }
+        if (!allowed) return false
+        if (privacy.quietHours.enabled && inQuietHours(System.currentTimeMillis(), privacy.quietHours)) {
+            return false
+        }
+        return true
+    }
+
+    /** Parent-local quiet-hours check; the window may cross midnight (e.g. 21:00 → 07:00). */
+    private fun inQuietHours(nowUtcMillis: Long, q: QuietHours): Boolean {
+        val start = parseHourMinutes(q.start) ?: return false
+        val end = parseHourMinutes(q.end) ?: return false
+        val cal = Calendar.getInstance(SimpleTimeZone(q.utcOffsetMinutes * 60_000, "UTC"))
+        cal.timeInMillis = nowUtcMillis
+        val minutes = cal.get(Calendar.HOUR_OF_DAY) * 60 + cal.get(Calendar.MINUTE)
+        return if (start <= end) minutes in start until end else minutes >= start || minutes < end
+    }
+
+    private fun parseHourMinutes(value: String): Int? {
+        val parts = value.split(":")
+        if (parts.size != 2) return null
+        val h = parts[0].trim().toIntOrNull() ?: return null
+        val m = parts[1].trim().toIntOrNull() ?: return null
+        if (h !in 0..23 || m !in 0..59) return null
+        return h * 60 + m
+    }
+
+    /** Data-only push asking the child device to bring up the remote lock screen. */
+    private fun handleRemoteLock(context: Context, data: Map<String, String>) {
+        val childName = data["childName"] ?: "Child"
+        val reason = data["reason"] ?: "Parent Remote Screen Lock"
+        val emergencyNumber = data["emergencyNumber"] ?: "999"
+        context.startActivity(DeviceLockActivity.createIntent(context, childName, reason, emergencyNumber))
+        // The lock screen may start behind the keyguard or be dismissed; raise a heads-up alert too.
+        showAlert(context, "K-Guard Remote Lock", "Screen switched off by parent for $childName: $reason")
     }
 
     companion object {
+        private const val TAG = "KGuardMessaging"
         const val CHANNEL_ID = "safety_alerts"
+        private val notificationId = AtomicInteger(0)
 
         fun ensureChannel(context: Context) {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -59,6 +157,7 @@ class KGuardMessagingService : FirebaseMessagingService() {
                 != PackageManager.PERMISSION_GRANTED
             ) return
             ensureChannel(context)
+            val id = notificationId.incrementAndGet()
             val intent = Intent(context, MainActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 if (destinationRoute != null) {
@@ -66,7 +165,7 @@ class KGuardMessagingService : FirebaseMessagingService() {
                 }
             }
             val open = PendingIntent.getActivity(
-                context, System.currentTimeMillis().toInt(), intent,
+                context, id, intent,
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
             )
             val n = NotificationCompat.Builder(context, CHANNEL_ID)
@@ -77,8 +176,9 @@ class KGuardMessagingService : FirebaseMessagingService() {
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setAutoCancel(true)
                 .setContentIntent(open)
+                .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
                 .build()
-            NotificationManagerCompat.from(context).notify(System.currentTimeMillis().toInt(), n)
+            NotificationManagerCompat.from(context).notify(id, n)
         }
     }
 }

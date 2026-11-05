@@ -1,6 +1,7 @@
 package com.tele.k_guard.ui.screens
 
 import android.util.Log
+import android.util.Patterns
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -34,6 +35,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -72,12 +74,10 @@ fun SignInScreen(
         error = error,
         showDemoButton = showDemo,
         onSignIn = { email, password ->
-            Log.d("KGuard", "UI: User clicked Sign In with Email: $email")
             session.signIn(email, password)
             onParentSignedIn()
         },
         onSignUp = { email, password ->
-            Log.d("KGuard", "UI: User clicked Create Account with Email: $email")
             session.signUp(email, password)
             onParentSignedIn()
         },
@@ -118,7 +118,6 @@ fun SignInScreen(
             }
         },
         onRedeemOtp = { otp ->
-            Log.d("KGuard", "UI: User clicked Redeem OTP: $otp")
             session.redeemPairingCode(otp, onDone = onChildPaired)
         },
         onDemoClick = {
@@ -141,11 +140,11 @@ fun SignInContent(
     onRedeemOtp: (String) -> Unit = {},
     onDemoClick: () -> Unit = {}
 ) {
-    var isChildMode by remember { mutableStateOf(false) }
-    var email by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var otpCode by remember { mutableStateOf("") }
-    val validParent = email.contains("@") && password.length >= 6
+    var isChildMode by rememberSaveable { mutableStateOf(false) }
+    var email by rememberSaveable { mutableStateOf("") }
+    var password by rememberSaveable { mutableStateOf("") }
+    var otpCode by rememberSaveable { mutableStateOf("") }
+    val validParent = Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches() && password.length >= 6
     val validOtp = otpCode.trim().length == 6
 
     Column(

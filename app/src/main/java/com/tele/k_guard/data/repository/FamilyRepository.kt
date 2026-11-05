@@ -7,6 +7,7 @@ import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.SetOptions
 import com.google.firebase.functions.FirebaseFunctions
 import com.google.firebase.messaging.FirebaseMessaging
 import com.tele.k_guard.data.model.ChildProfile
@@ -30,7 +31,7 @@ object FamilyRepository {
 
     fun authState(): Flow<FirebaseUser?> = callbackFlow {
         val listener = FirebaseAuth.AuthStateListener {
-            Log.d("KGuard", "FamilyRepository: authState changed, user=${it.currentUser?.email}")
+            Log.d("KGuard", "FamilyRepository: authState changed, signedIn=${it.currentUser != null}")
             trySend(it.currentUser)
         }
         auth.addAuthStateListener(listener)
@@ -38,15 +39,15 @@ object FamilyRepository {
     }
 
     suspend fun signIn(email: String, password: String) {
-        Log.d("KGuard", "FamilyRepository: signInWithEmailAndPassword for $email")
+        Log.d("KGuard", "FamilyRepository: signInWithEmailAndPassword")
         auth.signInWithEmailAndPassword(email.trim(), password).await()
-        Log.d("KGuard", "FamilyRepository: signInWithEmailAndPassword success for $email")
+        Log.d("KGuard", "FamilyRepository: signInWithEmailAndPassword success")
     }
 
     suspend fun signUp(email: String, password: String) {
-        Log.d("KGuard", "FamilyRepository: createUserWithEmailAndPassword for $email")
+        Log.d("KGuard", "FamilyRepository: createUserWithEmailAndPassword")
         auth.createUserWithEmailAndPassword(email.trim(), password).await()
-        Log.d("KGuard", "FamilyRepository: createUserWithEmailAndPassword success for $email")
+        Log.d("KGuard", "FamilyRepository: createUserWithEmailAndPassword success")
     }
 
     suspend fun signInWithCredential(credential: AuthCredential) {
@@ -66,7 +67,8 @@ object FamilyRepository {
         val res = functions.getHttpsCallable("createFamily").call().await()
         @Suppress("UNCHECKED_CAST")
         val data = res.data as Map<String, Any?>
-        val familyId = data["familyId"] as String
+        val familyId = data["familyId"] as? String
+            ?: throw IllegalStateException("createFamily response missing familyId.")
         Log.d("KGuard", "FamilyRepository: ensureFamily success, familyId=$familyId")
         return familyId
     }
@@ -92,7 +94,7 @@ object FamilyRepository {
     }
 
     suspend fun saveChild(familyId: String, child: ChildProfile): String {
-        Log.d("KGuard", "FamilyRepository: saveChild familyId=$familyId, childId=${child.id}, name=${child.name}")
+        Log.d("KGuard", "FamilyRepository: saveChild familyId=$familyId, childId=${child.id}")
         val col = db.collection("families/$familyId/children")
         val data = hashMapOf<String, Any?>(
             "name" to child.name.trim(),
@@ -108,7 +110,12 @@ object FamilyRepository {
             Log.d("KGuard", "FamilyRepository: saveChild created new child with id=${ref.id}")
             ref.id
         } else {
-            col.document(child.id).update(data).await()
+            val docRef = col.document(child.id)
+            // createdAt must always exist: children() orders by it, so backfill it if the doc lacks one.
+            if (docRef.get().await().getTimestamp("createdAt") == null) {
+                data["createdAt"] = FieldValue.serverTimestamp()
+            }
+            docRef.update(data).await()
             Log.d("KGuard", "FamilyRepository: saveChild updated child with id=${child.id}")
             child.id
         }
@@ -125,13 +132,14 @@ object FamilyRepository {
         Log.d("KGuard", "FamilyRepository: createPairingCode for childId=$childId")
         val res = functions.getHttpsCallable("createPairingCode").call(mapOf("childId" to childId)).await()
         @Suppress("UNCHECKED_CAST")
-        val code = (res.data as Map<String, Any?>)["code"] as String
-        Log.d("KGuard", "FamilyRepository: createPairingCode success, code=$code")
+        val code = (res.data as Map<String, Any?>)["code"] as? String
+            ?: throw IllegalStateException("createPairingCode response missing code.")
+        Log.d("KGuard", "FamilyRepository: createPairingCode success")
         return code
     }
 
     suspend fun redeemPairingCode(code: String): Map<String, Any?> {
-        Log.d("KGuard", "FamilyRepository: redeemPairingCode for code=$code")
+        Log.d("KGuard", "FamilyRepository: redeemPairingCode")
         val res = functions.getHttpsCallable("redeemPairingCode").call(mapOf("code" to code)).await()
         @Suppress("UNCHECKED_CAST")
         val data = res.data as Map<String, Any?>
@@ -155,6 +163,26 @@ object FamilyRepository {
                     d.toObject(SafetyEvent::class.java)?.copy(id = d.id)
                 } ?: emptyList()
                 Log.d("KGuard", "FamilyRepository: events loaded count=${list.size}")
+                trySend(list)
+            }
+        awaitClose { reg.remove() }
+    }
+
+    /** Lightweight listener for open alerts only; drives the dashboard badge without the 100-event cap. */
+    fun openEvents(familyId: String): Flow<List<SafetyEvent>> = callbackFlow {
+        Log.d("KGuard", "FamilyRepository: openEvents flow started for familyId=$familyId")
+        val reg = db.collection("families/$familyId/events")
+            .whereEqualTo("status", "open")
+            .addSnapshotListener { snap, err ->
+                if (err != null) {
+                    Log.e("KGuard", "FamilyRepository: openEvents listener error", err)
+                    close(err)
+                    return@addSnapshotListener
+                }
+                val list = snap?.documents?.mapNotNull { d ->
+                    d.toObject(SafetyEvent::class.java)?.copy(id = d.id)
+                } ?: emptyList()
+                Log.d("KGuard", "FamilyRepository: openEvents loaded count=${list.size}")
                 trySend(list)
             }
         awaitClose { reg.remove() }
@@ -224,7 +252,15 @@ object FamilyRepository {
     suspend fun registerPushToken(token: String? = null) {
         val uid = currentUser?.uid ?: return
         val t = token ?: FirebaseMessaging.getInstance().token.await()
-        db.document("users/$uid").update("fcmTokens", FieldValue.arrayUnion(t)).await()
-        Log.d("KGuard", "FamilyRepository: registerPushToken success")
+        try {
+            // set(..., merge) creates the doc when missing; update() would fail NOT_FOUND.
+            db.document("users/$uid")
+                .set(mapOf("fcmTokens" to FieldValue.arrayUnion(t)), SetOptions.merge())
+                .await()
+            Log.d("KGuard", "FamilyRepository: registerPushToken success")
+        } catch (e: Exception) {
+            Log.e("KGuard", "FamilyRepository: registerPushToken failed", e)
+            throw e
+        }
     }
 }

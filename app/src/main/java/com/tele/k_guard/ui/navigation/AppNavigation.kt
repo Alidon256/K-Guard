@@ -49,7 +49,9 @@ import kotlinx.coroutines.launch
 @Composable
 fun AppNavigation(
     navController: NavHostController = rememberNavController(),
-    targetRoute: String? = null
+    targetRoute: String? = null,
+    targetRouteId: Int = 0,
+    onTargetRouteConsumed: () -> Unit = {}
 ) {
     val context = LocalContext.current.applicationContext
     val userPreferencesRepository = UserPreferencesRepository(context)
@@ -58,6 +60,7 @@ fun AppNavigation(
         factory = AgeProfileViewModelFactory(userPreferencesRepository)
     )
     val devicePreferredProfile by ageProfileViewModel.selectedAgeProfile.collectAsState()
+    val deviceProfileLoaded by ageProfileViewModel.profileLoaded.collectAsState()
 
     val session: SessionViewModel = viewModel()
     val user by session.user.collectAsState()
@@ -74,6 +77,8 @@ fun AppNavigation(
     // The selected child's age group drives every check; before any child exists, fall back to the device setting.
     val activeAgeProfile = selectedChild?.age ?: devicePreferredProfile
     val activeChildId = selectedChild?.id
+    // A child's own profile is authoritative the moment it loads; the device setting only counts once it loads.
+    val ageProfileLoaded = selectedChild != null || deviceProfileLoaded
 
     val textModerationViewModel: TextModerationViewModel = viewModel()
     val imageModerationViewModel: ImageModerationViewModel = viewModel()
@@ -97,13 +102,15 @@ fun AppNavigation(
         }
     }
 
-    // Handle deep navigation from FCM push notifications
-    LaunchedEffect(targetRoute, signedIn) {
+    // Handle deep navigation from FCM push notifications. targetRouteId lets repeat taps of the
+    // same route re-fire this effect; the route is consumed after navigating.
+    LaunchedEffect(targetRoute, targetRouteId, signedIn) {
         if (signedIn && targetRoute != null) {
             when (targetRoute) {
-                "app_management" -> navController.navigate(Screen.AppManagement.route)
-                "review_queue" -> navController.navigate(Screen.ReviewQueue.route)
+                "app_management" -> navController.navigate(Screen.AppManagement.route) { launchSingleTop = true }
+                "review_queue" -> navController.navigate(Screen.ReviewQueue.route) { launchSingleTop = true }
             }
+            onTargetRouteConsumed()
         }
     }
 
@@ -148,8 +155,10 @@ fun AppNavigation(
             ChildPinSetupScreen(
                 onPinSaved = { pin ->
                     scope.launch {
-                        userPreferencesRepository.saveParentPinHash(pin)
-                        userPreferencesRepository.saveChildDeviceMode(true, activeChildId)
+                        userPreferencesRepository.saveParentPin(pin)
+                        // On a freshly paired child device the children list may not have loaded
+                        // yet, so prefer the childId captured during pairing.
+                        userPreferencesRepository.saveChildDeviceMode(true, session.selectedChildId.value ?: activeChildId)
                         navController.navigate(Screen.ChildDashboard.route) { popUpTo(0) }
                     }
                 }
@@ -193,7 +202,7 @@ fun AppNavigation(
                 pendingApprovalCount = pendingApprovalsCount,
                 onNavigateToTextModeration = { navController.navigate(Screen.TextModeration.route) },
                 onNavigateToImageModeration = { navController.navigate(Screen.ImageModeration.route) },
-                onNavigateToAgeProfile = { navController.navigate(Screen.Children.route) },
+                onNavigateToAgeProfile = { navController.navigate(Screen.AgeProfile.route) },
                 onNavigateToScreenTime = { navController.navigate(Screen.ScreenTime.route) },
                 onNavigateToAppManagement = { navController.navigate(Screen.AppManagement.route) },
                 onNavigateToFlaggedContent = { navController.navigate(Screen.ReviewQueue.route) },
@@ -227,6 +236,7 @@ fun AppNavigation(
                 viewModel = textModerationViewModel,
                 activeAgeProfile = activeAgeProfile,
                 activeChildId = activeChildId,
+                profileLoaded = ageProfileLoaded,
                 onNavigateBack = { navController.popBackStack() }
             )
         }
@@ -236,6 +246,7 @@ fun AppNavigation(
                 viewModel = imageModerationViewModel,
                 activeAgeProfile = activeAgeProfile,
                 activeChildId = activeChildId,
+                profileLoaded = ageProfileLoaded,
                 onNavigateBack = { navController.popBackStack() }
             )
         }

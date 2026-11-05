@@ -2,8 +2,6 @@ package com.tele.k_guard.ui.screens
 
 import android.Manifest
 import android.os.Build
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -28,10 +26,12 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import com.tele.k_guard.data.model.FamilyPrivacy
 import com.tele.k_guard.data.model.QuietHours
 import com.tele.k_guard.ui.components.KGuardTopAppBar
+import com.tele.k_guard.ui.components.RequestPermission
 import com.tele.k_guard.ui.theme.KGuardTheme
 import com.tele.k_guard.viewmodel.SessionViewModel
 import java.util.TimeZone
@@ -53,13 +54,18 @@ fun PrivacyScreen(session: SessionViewModel, onNavigateBack: () -> Unit) {
     val saved by session.privacy.collectAsState()
     val busy by session.busy.collectAsState()
     val user by session.user.collectAsState()
+    // The form must not seed itself from defaults before the family doc (or demo data) is streaming.
+    val familyId by session.familyId.collectAsState()
 
     PrivacyContent(
         saved = saved,
         busy = busy,
         userEmail = user?.email,
+        formReady = familyId != null,
+        // Demo sessions have no Firebase user; exiting the demo replaces a real sign-out there.
+        demoMode = user == null,
         onSavePrivacy = { session.savePrivacy(it) },
-        onSignOut = { session.signOut() },
+        onSignOut = { if (user == null) session.exitDemo() else session.signOut() },
         onNavigateBack = onNavigateBack
     )
 }
@@ -69,19 +75,41 @@ fun PrivacyContent(
     saved: FamilyPrivacy,
     busy: Boolean,
     userEmail: String?,
+    formReady: Boolean = true,
+    demoMode: Boolean = false,
     onSavePrivacy: (FamilyPrivacy) -> Unit,
     onSignOut: () -> Unit,
     onNavigateBack: () -> Unit
 ) {
-    var notifyOn by remember(saved) { mutableStateOf(saved.notifyOn) }
-    var includeSnippet by remember(saved) { mutableStateOf(saved.includeSnippet) }
-    var retainDays by remember(saved) { mutableStateOf(saved.retainDays) }
-    var quiet by remember(saved) { mutableStateOf(saved.quietHours.enabled) }
-    var qStart by remember(saved) { mutableStateOf(saved.quietHours.start) }
-    var qEnd by remember(saved) { mutableStateOf(saved.quietHours.end) }
-    val timesOk = !quiet || (TIME.matches(qStart) && TIME.matches(qEnd))
+    var notifyOn by rememberSaveable { mutableStateOf(saved.notifyOn) }
+    var includeSnippet by rememberSaveable { mutableStateOf(saved.includeSnippet) }
+    var retainDays by rememberSaveable { mutableStateOf(saved.retainDays) }
+    var quiet by rememberSaveable { mutableStateOf(saved.quietHours.enabled) }
+    var qStart by rememberSaveable { mutableStateOf(saved.quietHours.start) }
+    var qEnd by rememberSaveable { mutableStateOf(saved.quietHours.end) }
+    var initialized by rememberSaveable { mutableStateOf(false) }
 
-    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    // Seed the form from the remote document exactly ONCE per screen instance. Later remote
+    // changes must not clobber settings the parent is mid-way through editing; the seeded
+    // form fields themselves survive rotation via rememberSaveable.
+    LaunchedEffect(saved, formReady) {
+        if (!initialized && formReady) {
+            notifyOn = saved.notifyOn
+            includeSnippet = saved.includeSnippet
+            retainDays = saved.retainDays
+            quiet = saved.quietHours.enabled
+            qStart = saved.quietHours.start
+            qEnd = saved.quietHours.end
+            initialized = true
+        }
+    }
+
+    var notificationsDeclined by remember { mutableStateOf(false) }
+    val requestNotifications = RequestPermission(Manifest.permission.POST_NOTIFICATIONS) { granted ->
+        notificationsDeclined = !granted
+    }
+
+    val timesOk = !quiet || (TIME.matches(qStart) && TIME.matches(qEnd))
 
     Scaffold(topBar = { KGuardTopAppBar("Privacy & Notifications", canNavigateBack = true, onNavigateBack = onNavigateBack) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState())) {
@@ -97,7 +125,15 @@ fun PrivacyContent(
                 ) { RadioButton(selected = notifyOn == id, onClick = null); Spacer(Modifier.width(8.dp)); Text(label) }
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                OutlinedButton(onClick = { permission.launch(Manifest.permission.POST_NOTIFICATIONS) }) { Text("Allow notifications on this phone") }
+                OutlinedButton(onClick = requestNotifications) { Text("Allow notifications on this phone") }
+                if (notificationsDeclined) {
+                    Text(
+                        "Notifications were declined. You can enable them later in your phone's settings for K-Guard.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
             }
 
             Spacer(Modifier.height(12.dp)); HorizontalDivider(); Spacer(Modifier.height(12.dp))
@@ -148,7 +184,9 @@ fun PrivacyContent(
 
             Spacer(Modifier.height(24.dp)); HorizontalDivider(); Spacer(Modifier.height(12.dp))
             Text("Signed in as ${userEmail ?: "—"}", style = MaterialTheme.typography.bodySmall)
-            OutlinedButton(onClick = onSignOut, modifier = Modifier.padding(top = 8.dp)) { Text("Sign out") }
+            OutlinedButton(onClick = onSignOut, modifier = Modifier.padding(top = 8.dp)) {
+                Text(if (demoMode) "Exit demo" else "Sign out")
+            }
         }
     }
 }

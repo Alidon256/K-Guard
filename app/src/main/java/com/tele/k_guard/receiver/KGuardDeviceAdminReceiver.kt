@@ -16,6 +16,11 @@ class KGuardDeviceAdminReceiver : DeviceAdminReceiver() {
         Toast.makeText(context, "K-Guard Child Protection Administrator Enabled", Toast.LENGTH_SHORT).show()
     }
 
+    override fun onDisableRequested(context: Context, intent: Intent): CharSequence {
+        super.onDisableRequested(context, intent)
+        return "K-Guard needs device admin to enforce parental screen locking. If you disable it, remote lock stops working."
+    }
+
     override fun onDisabled(context: Context, intent: Intent) {
         super.onDisabled(context, intent)
         Toast.makeText(context, "K-Guard Child Protection Administrator Disabled", Toast.LENGTH_SHORT).show()

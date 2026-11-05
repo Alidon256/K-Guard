@@ -70,6 +70,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -112,8 +113,8 @@ fun ScreenTimeScreen(
     val familyId = session?.familyId?.collectAsState()?.value
 
     val children = if (!childrenFromSession.isNullOrEmpty()) childrenFromSession else listOf(
-        ChildProfile("c1", "Ama", AgeProfile.PRETEENS_8_12.id),
-        ChildProfile("c2", "Kofi", AgeProfile.TEENS_13_17.id)
+        ChildProfile(id = "c1", name = "Ama", ageProfile = AgeProfile.PRETEENS_8_12.id),
+        ChildProfile(id = "c2", name = "Kofi", ageProfile = AgeProfile.TEENS_13_17.id)
     )
 
     // Sync family and selected child from session
@@ -125,9 +126,10 @@ fun ScreenTimeScreen(
     }
 
     val snackbarHostState = remember { SnackbarHostState() }
-    LaunchedEffect(feedbackMessage) {
+    // Key on the feedback id (not the message string) so repeated identical actions re-show the snackbar.
+    LaunchedEffect(feedbackMessage?.id) {
         feedbackMessage?.let {
-            snackbarHostState.showSnackbar(it)
+            snackbarHostState.showSnackbar(it.message)
             viewModel.clearFeedback()
         }
     }
@@ -174,10 +176,10 @@ fun ScreenTimeDashboardContent(
     onNavigateBack: () -> Unit,
     snackbarHostState: SnackbarHostState = remember { SnackbarHostState() }
 ) {
-    var showSwitchOffDialog by remember { mutableStateOf(false) }
-    var selectedReason by remember { mutableStateOf("Dinner Time") }
-    var customReason by remember { mutableStateOf("") }
-    var activeTab by remember { mutableIntStateOf(0) } // 0: Controls & Status, 1: Apps & Breakdown, 2: Schedules, 3: History
+    var showSwitchOffDialog by rememberSaveable { mutableStateOf(false) }
+    var selectedReason by rememberSaveable { mutableStateOf("Dinner Time") }
+    var customReason by rememberSaveable { mutableStateOf("") }
+    var activeTab by rememberSaveable { mutableIntStateOf(0) } // 0: Controls & Status, 1: Apps & Breakdown, 2: Schedules, 3: History
 
     Scaffold(
         topBar = {
@@ -434,14 +436,9 @@ fun ChildrenDeviceSelector(
                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                         color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    // Online indicator dot
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(if (isSelected) Color(0xFF4ADE80) else Color(0xFF22C55E))
-                    )
+                    // NOTE: no per-child online indicator here — the ViewModel only exposes live
+                    // telemetry for the currently selected child, so fabricating presence for the
+                    // other children would be dishonest. The status card shows real online state.
                 }
             }
         }
@@ -889,15 +886,23 @@ fun DailyLimitManagementSection(
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            // Slider
+            // Slider — holds a local pending value during the drag and only commits to the
+            // repository on release, avoiding a Firestore write batch per drag step and the
+            // thumb snap-back during round-trips.
+            var pendingLimit by remember(device.dailyLimitMinutes) { mutableStateOf<Float?>(null) }
+            val sliderValue = pendingLimit ?: device.dailyLimitMinutes.toFloat()
             Text(
-                text = "Adjust Daily Limit: ${device.dailyLimitMinutes} Minutes (${device.dailyLimitMinutes / 60}h ${device.dailyLimitMinutes % 60}m)",
+                text = "Adjust Daily Limit: ${sliderValue.toInt()} Minutes (${sliderValue.toInt() / 60}h ${sliderValue.toInt() % 60}m)",
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.Bold
             )
             Slider(
-                value = device.dailyLimitMinutes.toFloat(),
-                onValueChange = { onUpdateDailyLimit(it.toInt()) },
+                value = sliderValue,
+                onValueChange = { pendingLimit = it },
+                onValueChangeFinished = {
+                    pendingLimit?.let { onUpdateDailyLimit(it.toInt()) }
+                    pendingLimit = null
+                },
                 valueRange = 15f..360f,
                 steps = 22
             )
@@ -1222,6 +1227,7 @@ fun RemoteCommandHistorySection(commandHistory: List<RemoteCommand>) {
                                         RemoteAction.UNLOCK_DEVICE -> Color(0xFFDCFCE7)
                                         RemoteAction.SOUND_ALARM -> Color(0xFFFEF3C7)
                                         RemoteAction.ADD_BONUS_TIME -> Color(0xFFEDE9FE)
+                                        RemoteAction.SET_DAILY_LIMIT -> MaterialTheme.colorScheme.surfaceVariant
                                         else -> MaterialTheme.colorScheme.surfaceVariant
                                     }
                                 ),
@@ -1233,6 +1239,7 @@ fun RemoteCommandHistorySection(commandHistory: List<RemoteCommand>) {
                                     RemoteAction.UNLOCK_DEVICE -> Icons.Default.LockOpen
                                     RemoteAction.SOUND_ALARM -> Icons.Default.VolumeUp
                                     RemoteAction.ADD_BONUS_TIME -> Icons.Default.MoreTime
+                                    RemoteAction.SET_DAILY_LIMIT -> Icons.Default.Timer
                                     else -> Icons.Default.History
                                 },
                                 contentDescription = null,
@@ -1241,6 +1248,7 @@ fun RemoteCommandHistorySection(commandHistory: List<RemoteCommand>) {
                                     RemoteAction.UNLOCK_DEVICE -> Color(0xFF16A34A)
                                     RemoteAction.SOUND_ALARM -> Color(0xFFD97706)
                                     RemoteAction.ADD_BONUS_TIME -> Color(0xFF7C3AED)
+                                    RemoteAction.SET_DAILY_LIMIT -> Color(0xFF475569)
                                     else -> MaterialTheme.colorScheme.primary
                                 },
                                 modifier = Modifier.size(18.dp)

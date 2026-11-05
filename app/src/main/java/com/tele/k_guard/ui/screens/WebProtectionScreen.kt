@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -31,6 +32,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -97,6 +99,14 @@ fun WebProtectionContent(
 ) {
     var tab by remember { mutableIntStateOf(runCatching { com.tele.k_guard.DebugPreview.webTab }.getOrDefault(0)) }
     val openWeb = events.count { it.contentType == "web" && it.isOpen }
+    val context = LocalContext.current
+    // One shared filter for the whole screen, reloaded when the configuration it explains changes.
+    val customBlock by store.customBlock.collectAsState()
+    val customAllow by store.customAllow.collectAsState()
+    val edu by store.educationalAllow.collectAsState()
+    val filter = remember(customBlock, customAllow, edu, child?.categoryRules) {
+        runCatching { DomainFilter.load(context) }.getOrNull()
+    }
 
     Scaffold(topBar = { KGuardTopAppBar("Web Protection", canNavigateBack = true, onNavigateBack = onNavigateBack) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
@@ -111,8 +121,8 @@ fun WebProtectionContent(
                 })
             }
             when (tab) {
-                0 -> StatusTab(session, store)
-                1 -> CategoriesTab(session, store)
+                0 -> StatusTab(session, store, filter)
+                1 -> CategoriesTab(session, store, filter)
                 else -> ActivityTab(session, store)
             }
         }
@@ -121,12 +131,11 @@ fun WebProtectionContent(
 
 // ---------------------------------------------------------------- Status: on/off + "Check a site"
 @Composable
-private fun StatusTab(session: SessionViewModel, store: VpnConfigStore) {
+private fun StatusTab(session: SessionViewModel, store: VpnConfigStore, filter: DomainFilter?) {
     val context = LocalContext.current
     val child by session.selectedChild.collectAsState()
     val running by VpnState.running.collectAsState()
     val blocked by VpnState.blockedCount.collectAsState()
-    val filter = remember { runCatching { DomainFilter.load(context) }.getOrNull() }
 
     val consent = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) KGuardVpnService.start(context)
@@ -142,6 +151,20 @@ private fun StatusTab(session: SessionViewModel, store: VpnConfigStore) {
     var siteBlocked by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
+        if (filter?.hadLoadErrors == true) {
+            Card(
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+            ) {
+                Text(
+                    "Some blocklists failed to load, so some categories may not be filtered. Try restarting the app.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.padding(12.dp)
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+        }
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(
@@ -218,13 +241,11 @@ private fun StatusTab(session: SessionViewModel, store: VpnConfigStore) {
 
 // ---------------------------------------------------------------- Categories: age-aware protection
 @Composable
-private fun CategoriesTab(session: SessionViewModel, store: VpnConfigStore) {
-    val context = LocalContext.current
+private fun CategoriesTab(session: SessionViewModel, store: VpnConfigStore, filter: DomainFilter?) {
     val child by session.selectedChild.collectAsState()
     val customBlock by store.customBlock.collectAsState()
     val customAllow by store.customAllow.collectAsState()
     val edu by store.educationalAllow.collectAsState()
-    val filter = remember { runCatching { DomainFilter.load(context) }.getOrNull() }
     val busy by session.busy.collectAsState()
     var blockInput by remember { mutableStateOf("") }
     var allowInput by remember { mutableStateOf("") }
@@ -253,7 +274,13 @@ private fun CategoriesTab(session: SessionViewModel, store: VpnConfigStore) {
         SafetyCategory.entries.forEach { cat ->
             val eff = DomainFilter.effective(cat, policy)
             val current = CategoryRule.fromId(c.categoryRules[cat.id])
-            val shown = when (current) { CategoryRule.BLOCK -> "Block"; CategoryRule.ALLOW -> if (eff.source == Source.LOCKED) "Block" else "Allow"; null -> "Default"; else -> "Default" }
+            val shown = when (current) {
+                CategoryRule.BLOCK -> "Block"
+                CategoryRule.ALLOW -> if (eff.source == Source.LOCKED) "Block" else "Allow"
+                CategoryRule.WARN -> "Warn"
+                CategoryRule.BLUR -> "Blur"
+                null -> "Default"
+            }
             val count = filter?.listSize(cat) ?: 0
             Card(Modifier.fillMaxWidth().padding(vertical = 4.dp), shape = RoundedCornerShape(12.dp)) {
                 Column(Modifier.padding(12.dp)) {
@@ -273,6 +300,8 @@ private fun CategoriesTab(session: SessionViewModel, store: VpnConfigStore) {
                         FilterChip(selected = shown == "Default", enabled = !busy, onClick = { session.saveChild(c.copy(categoryRules = c.categoryRules - cat.id)) }, label = { Text("Default") })
                         FilterChip(selected = shown == "Block", enabled = !busy, onClick = { session.saveChild(c.copy(categoryRules = c.categoryRules + (cat.id to CategoryRule.BLOCK.id))) }, label = { Text("Block") })
                         if (!cat.lockedAgainstRelaxing || c.age == com.tele.k_guard.data.model.AgeProfile.ADULTS_18_PLUS) {
+                            FilterChip(selected = shown == "Warn", enabled = !busy, onClick = { session.saveChild(c.copy(categoryRules = c.categoryRules + (cat.id to CategoryRule.WARN.id))) }, label = { Text("Warn") })
+                            FilterChip(selected = shown == "Blur", enabled = !busy, onClick = { session.saveChild(c.copy(categoryRules = c.categoryRules + (cat.id to CategoryRule.BLUR.id))) }, label = { Text("Blur") })
                             FilterChip(selected = shown == "Allow", enabled = !busy, onClick = { session.saveChild(c.copy(categoryRules = c.categoryRules + (cat.id to CategoryRule.ALLOW.id))) }, label = { Text("Allow") })
                         }
                     }
@@ -330,6 +359,7 @@ private fun ActivityTab(session: SessionViewModel, store: VpnConfigStore) {
     val recent by VpnState.recent.collectAsState()
     val webEvents = events.filter { it.contentType == "web" }
     var onlyOpen by remember { mutableStateOf(true) }
+    var pendingAllow by remember { mutableStateOf<String?>(null) }
     val shown = webEvents.filter { !onlyOpen || it.isOpen }
 
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
@@ -347,6 +377,10 @@ private fun ActivityTab(session: SessionViewModel, store: VpnConfigStore) {
         }
         shown.forEach { ev -> WebAlertCard(ev, session, store) }
 
+        pendingAllow?.let { domain ->
+            AllowSiteDialog(domain, onConfirm = { store.addCustomAllow(domain); pendingAllow = null }, onDismiss = { pendingAllow = null })
+        }
+
         if (recent.isNotEmpty()) {
             Spacer(Modifier.height(16.dp)); HorizontalDivider(); Spacer(Modifier.height(12.dp))
             Text("Blocked on this phone (this session)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -358,7 +392,7 @@ private fun ActivityTab(session: SessionViewModel, store: VpnConfigStore) {
                         Text(DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(e.time)), style = MaterialTheme.typography.labelSmall)
                     }
                     Text(e.explanation, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    OutlinedButton(onClick = { store.addCustomAllow(e.domain) }, modifier = Modifier.padding(top = 4.dp)) { Text("Allow this site") }
+                    OutlinedButton(onClick = { pendingAllow = e.domain }, modifier = Modifier.padding(top = 4.dp)) { Text("Allow this site") }
                 }
             }
         }
@@ -367,6 +401,7 @@ private fun ActivityTab(session: SessionViewModel, store: VpnConfigStore) {
 
 @Composable
 private fun WebAlertCard(ev: SafetyEvent, session: SessionViewModel, store: VpnConfigStore) {
+    var pendingAllow by remember { mutableStateOf<String?>(null) }
     Card(Modifier.fillMaxWidth().padding(vertical = 4.dp), shape = RoundedCornerShape(12.dp)) {
         Column(Modifier.padding(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -385,7 +420,7 @@ private fun WebAlertCard(ev: SafetyEvent, session: SessionViewModel, store: VpnC
                 Row(Modifier.horizontalScroll(rememberScrollState()).padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { session.review(ev.id, ParentAction.KEEP_BLOCKED, "") }) { Text("Keep blocked") }
                     if (ev.snippet != null) {
-                        OutlinedButton(onClick = { store.addCustomAllow(ev.snippet); session.review(ev.id, ParentAction.ALLOW, "Site allowed") }) { Text("Allow site") }
+                        OutlinedButton(onClick = { pendingAllow = ev.snippet }) { Text("Allow site") }
                     }
                     OutlinedButton(onClick = { session.review(ev.id, ParentAction.DISMISS, "") }) { Text("Dismiss") }
                 }
@@ -397,6 +432,25 @@ private fun WebAlertCard(ev: SafetyEvent, session: SessionViewModel, store: VpnC
             }
         }
     }
+    pendingAllow?.let { domain ->
+        AllowSiteDialog(
+            domain,
+            onConfirm = { store.addCustomAllow(domain); session.review(ev.id, ParentAction.ALLOW, "Site allowed"); pendingAllow = null },
+            onDismiss = { pendingAllow = null }
+        )
+    }
+}
+
+/** Confirms before a one-tap "allow" permanently lets a site through for this child. */
+@Composable
+private fun AllowSiteDialog(domain: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Always allow $domain?") },
+        text = { Text("This site will be allowed in every browser and app, whatever the category rules say. You can remove it again under Categories.") },
+        confirmButton = { TextButton(onClick = onConfirm) { Text("Allow") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }
 
 @Composable

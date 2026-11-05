@@ -1,5 +1,6 @@
 package com.tele.k_guard.ui.screens
 
+import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -35,6 +36,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -52,6 +54,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -72,6 +75,11 @@ import com.tele.k_guard.service.KGuardMessagingService
 import com.tele.k_guard.ui.components.KGuardTopAppBar
 import com.tele.k_guard.ui.theme.KGuardTheme
 import com.tele.k_guard.viewmodel.SessionViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.util.UUID
 
 /** Lists child profiles; the selected one drives which age rules apply in the checkers. */
 @Composable
@@ -206,6 +214,7 @@ fun ChildEditorScreen(
 
     ChildEditorContent(
         existing = existing,
+        childId = childId,
         busy = busy,
         error = error,
         pairingCode = pairingCode,
@@ -224,6 +233,7 @@ fun ChildEditorScreen(
 @Composable
 fun ChildEditorContent(
     existing: ChildProfile?,
+    childId: String? = null,
     busy: Boolean,
     error: String?,
     pairingCode: String? = null,
@@ -234,6 +244,24 @@ fun ChildEditorContent(
     onNavigateBack: () -> Unit
 ) {
     val context = LocalContext.current
+
+    // Editing an existing child requires the children stream to have actually emitted: before that
+    // `existing` is null and a naive Save would create a DUPLICATE child. Block the whole form (and
+    // therefore all input) until the record is loaded, so form state is only ever keyed/seeded from
+    // the resolved child and typed input is never wiped by a late emission.
+    val childrenLoaded = childId == null || existing != null
+    if (!childrenLoaded) {
+        Scaffold(
+            topBar = { KGuardTopAppBar("Loading…", canNavigateBack = true, onNavigateBack = onNavigateBack) }
+        ) { padding ->
+            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+        }
+        return
+    }
+
+    val scope = rememberCoroutineScope()
     var name by remember(existing?.id) { mutableStateOf(existing?.name ?: "") }
     var email by remember(existing?.id) { mutableStateOf(existing?.email ?: "") }
     var photoUrl by remember(existing?.id) { mutableStateOf(existing?.photoUrl ?: "") }
@@ -245,7 +273,12 @@ fun ChildEditorContent(
 
     val imagePicker = rememberLauncherFilePicker { uri ->
         if (uri != null) {
-            photoUrl = uri.toString()
+            // The picker's content:// URI is transient; copy the bytes into app-private storage so
+            // the photo still shows after a restart. Fall back to the raw URI if the copy fails.
+            scope.launch {
+                val stored = copyPickedPhoto(context, uri)
+                photoUrl = stored ?: uri.toString()
+            }
         }
     }
 
@@ -457,6 +490,25 @@ fun ChildEditorContent(
             },
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } }
         )
+    }
+}
+
+/**
+ * Copies a gallery image into app-private storage (filesDir/child_photos) so the child photo
+ * survives restarts and permission revocation of the source provider. Returns a file URI string,
+ * or null when the copy fails (caller falls back to the original URI).
+ * Note: this persists only on this device; syncing the photo across devices still needs an upload.
+ */
+private suspend fun copyPickedPhoto(context: Context, uri: Uri): String? = withContext(Dispatchers.IO) {
+    try {
+        val dir = File(context.filesDir, "child_photos").apply { mkdirs() }
+        val file = File(dir, "${UUID.randomUUID()}.jpg")
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            file.outputStream().use { output -> input.copyTo(output) }
+        } ?: return@withContext null
+        Uri.fromFile(file).toString()
+    } catch (e: Exception) {
+        null
     }
 }
 

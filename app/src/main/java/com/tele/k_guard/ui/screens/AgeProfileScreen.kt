@@ -1,5 +1,6 @@
 package com.tele.k_guard.ui.screens
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -10,12 +11,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
@@ -32,19 +35,32 @@ fun AgeProfileScreen(
     onSaveAndContinue: () -> Unit,
     onNavigateBack: () -> Unit
 ) {
-    val selectedProfile by viewModel.selectedAgeProfile.collectAsState()
+    val savedProfile by viewModel.selectedAgeProfile.collectAsState()
+    val pendingSelection by viewModel.pendingSelection.collectAsState()
+    val profileLoaded by viewModel.profileLoaded.collectAsState()
+    // The picker stages a pending selection; the saved value is only claimed once it is persisted.
+    val displayedProfile = pendingSelection ?: savedProfile
 
     AgeProfileContent(
-        selectedProfile = selectedProfile,
+        selectedProfile = displayedProfile,
+        profileLoaded = profileLoaded,
         onSelectProfile = { viewModel.selectAgeProfile(it) },
-        onSaveAndContinue = onSaveAndContinue,
-        onNavigateBack = onNavigateBack
+        onSaveAndContinue = {
+            viewModel.confirmSelection()
+            onSaveAndContinue()
+        },
+        onNavigateBack = {
+            // Leaving without confirming cancels the staged selection.
+            viewModel.clearSelection()
+            onNavigateBack()
+        }
     )
 }
 
 @Composable
 fun AgeProfileContent(
     selectedProfile: AgeProfile,
+    profileLoaded: Boolean = true,
     onSelectProfile: (AgeProfile) -> Unit,
     onSaveAndContinue: () -> Unit,
     onNavigateBack: () -> Unit
@@ -78,15 +94,28 @@ fun AgeProfileContent(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            LazyColumn(
-                modifier = Modifier.weight(1f)
-            ) {
-                items(AgeProfile.entries) { profile ->
-                    AgeProfileCard(
-                        profile = profile,
-                        isSelected = profile == selectedProfile,
-                        onSelect = { onSelectProfile(profile) }
-                    )
+            if (!profileLoaded) {
+                // Wait for the persisted profile before showing the list, so the highlight never
+                // briefly claims the DEFAULT profile on cold start.
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator()
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    items(AgeProfile.entries) { profile ->
+                        AgeProfileCard(
+                            profile = profile,
+                            isSelected = profile == selectedProfile,
+                            onSelect = { onSelectProfile(profile) }
+                        )
+                    }
                 }
             }
 
