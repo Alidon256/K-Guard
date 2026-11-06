@@ -16,6 +16,7 @@ import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.tele.k_guard.data.model.AppApprovalStatus
@@ -23,8 +24,10 @@ import com.tele.k_guard.data.repository.UserPreferencesRepository
 import com.tele.k_guard.ui.screens.AgeProfileScreen
 import com.tele.k_guard.ui.screens.AppDetailScreen
 import com.tele.k_guard.ui.screens.AppManagementScreen
+import com.tele.k_guard.ui.screens.BlockedAppScreen
 import com.tele.k_guard.ui.screens.ChildDashboardScreen
 import com.tele.k_guard.ui.screens.ChildEditorScreen
+import com.tele.k_guard.ui.screens.ChildPairingCodeScreen
 import com.tele.k_guard.ui.screens.ChildPinSetupScreen
 import com.tele.k_guard.ui.screens.ChildrenScreen
 import com.tele.k_guard.ui.screens.HomeScreen
@@ -49,10 +52,11 @@ import kotlinx.coroutines.launch
 @Composable
 fun AppNavigation(
     navController: NavHostController = rememberNavController(),
-    targetRoute: String? = null
+    targetRoute: String? = null,
+    /** Called once a notification's target has been opened, so it isn't opened again on recomposition. */
+    onTargetRouteHandled: () -> Unit = {},
+    userPreferencesRepository: UserPreferencesRepository = UserPreferencesRepository(LocalContext.current.applicationContext)
 ) {
-    val context = LocalContext.current.applicationContext
-    val userPreferencesRepository = UserPreferencesRepository(context)
     val scope = rememberCoroutineScope()
     val ageProfileViewModel: AgeProfileViewModel = viewModel(
         factory = AgeProfileViewModelFactory(userPreferencesRepository)
@@ -63,25 +67,35 @@ fun AppNavigation(
     val user by session.user.collectAsState()
     val signedIn by session.signedIn.collectAsState()
     val authChecked by session.authChecked.collectAsState()
+    val context = LocalContext.current
     val selectedChild by session.selectedChild.collectAsState()
     val openAlerts by session.openAlertCount.collectAsState()
     val familyId by session.familyId.collectAsState()
     val children by session.children.collectAsState()
 
-    val isChildDevice by userPreferencesRepository.isChildDeviceFlow.collectAsState(initial = false)
+    val isChildDevicePref by userPreferencesRepository.isChildDeviceFlow.collectAsState(initial = false)
+    val isChildAccount by session.isChildAccount.collectAsState()
+    // The account's role in Firestore decides; the saved flag only helps before it has loaded.
+    val isChildDevice = isChildAccount || isChildDevicePref
     val parentPinHash by userPreferencesRepository.parentPinHashFlow.collectAsState(initial = null)
+    val storedFamilyId by userPreferencesRepository.familyIdFlow.collectAsState(initial = null)
+    val storedChildId by userPreferencesRepository.activeChildIdFlow.collectAsState(initial = null)
+
+    val effectiveFamilyId = familyId ?: storedFamilyId
+    val effectiveChildId = selectedChild?.id ?: storedChildId
 
     // The selected child's age group drives every check; before any child exists, fall back to the device setting.
     val activeAgeProfile = selectedChild?.age ?: devicePreferredProfile
-    val activeChildId = selectedChild?.id
+    val activeChildId = effectiveChildId
 
     val textModerationViewModel: TextModerationViewModel = viewModel()
     val imageModerationViewModel: ImageModerationViewModel = viewModel()
     val screenTimeViewModel: ScreenTimeViewModel = viewModel()
     val appManagementViewModel: AppManagementViewModel = viewModel()
 
-    LaunchedEffect(familyId, activeChildId) {
-        appManagementViewModel.setFamilyAndChild(familyId, activeChildId)
+    LaunchedEffect(effectiveFamilyId, activeChildId) {
+        // Every child's apps: App Management filters by child itself, and the home badge counts all requests.
+        appManagementViewModel.setFamilyAndChild(effectiveFamilyId, null)
     }
 
     val managedApps by appManagementViewModel.managedApps.collectAsState()
@@ -97,13 +111,41 @@ fun AppNavigation(
         }
     }
 
-    // Handle deep navigation from FCM push notifications
-    LaunchedEffect(targetRoute, signedIn) {
-        if (signedIn && targetRoute != null) {
-            when (targetRoute) {
-                "app_management" -> navController.navigate(Screen.AppManagement.route)
-                "review_queue" -> navController.navigate(Screen.ReviewQueue.route)
-            }
+    // A child's account may only reach the child screens; anything else (parent dashboard, rules, approvals)
+    // sends it to its own dashboard. Also remembers the phone as a child device for the next cold start.
+    val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
+    LaunchedEffect(signedIn, isChildAccount, currentRoute) {
+        if (!signedIn || !isChildAccount) return@LaunchedEffect
+        if (!isChildDevicePref) {
+            userPreferencesRepository.saveChildDeviceMode(true, session.selectedChild.value?.id)
+            session.familyId.value?.let { userPreferencesRepository.saveFamilyId(it) }
+        }
+        val childRoutes = setOf(
+            Screen.ChildDashboard.route, Screen.ChildPinSetup.route, Screen.ChildPairingCode.route,
+            Screen.Profile.route
+        )
+        if (currentRoute != null && currentRoute !in childRoutes) {
+            val target = if (parentPinHash.isNullOrBlank()) Screen.ChildPinSetup.route else Screen.ChildDashboard.route
+            navController.navigate(target) { popUpTo(0) }
+        }
+    }
+
+    // Open the screen a tapped notification points to. Waits until the navigation graph exists (on a cold
+    // start it doesn't yet, and navigating then crashes), runs once per tap, and only for parent accounts:
+    // the child guard above keeps child phones on their own screens.
+    LaunchedEffect(targetRoute, signedIn, currentRoute, isChildAccount) {
+        if (!signedIn || targetRoute == null || currentRoute == null || isChildAccount) return@LaunchedEffect
+        val destination = when (targetRoute) {
+            "app_management" -> Screen.AppManagement.route
+            "review_queue" -> Screen.ReviewQueue.route
+            "screen_time" -> Screen.ScreenTime.route
+            "web_protection" -> Screen.WebProtection.route
+            else -> null
+        }
+        onTargetRouteHandled()
+        if (destination != null && destination != currentRoute) {
+            runCatching { navController.navigate(destination) { launchSingleTop = true } }
+                .onFailure { android.util.Log.w("KGuard", "Could not open $destination from a notification", it) }
         }
     }
 
@@ -114,7 +156,13 @@ fun AppNavigation(
 
     val startDestination = com.tele.k_guard.DebugPreview.startRoute?.takeIf { signedIn } ?: if (signedIn) {
         if (isChildDevice) {
-            if (parentPinHash.isNullOrBlank()) Screen.ChildPinSetup.route else Screen.ChildDashboard.route
+            if (effectiveFamilyId.isNullOrBlank()) {
+                Screen.ChildPairingCode.route
+            } else if (parentPinHash.isNullOrBlank()) {
+                Screen.ChildPinSetup.route
+            } else {
+                Screen.ChildDashboard.route
+            }
         } else {
             Screen.Home.route
         }
@@ -135,6 +183,7 @@ fun AppNavigation(
         composable(Screen.SignIn.route) {
             SignInScreen(
                 session = session,
+                userPreferencesRepository = userPreferencesRepository,
                 onParentSignedIn = {
                     navController.navigate(Screen.Home.route) { popUpTo(0) }
                 },
@@ -144,12 +193,34 @@ fun AppNavigation(
             )
         }
 
+        composable(Screen.ChildPairingCode.route) {
+            ChildPairingCodeScreen(
+                session = session,
+                onPairingSuccess = {
+                    scope.launch {
+                        val currentFid = session.familyId.value
+                        val currentCid = session.selectedChild.value?.id
+                        if (!currentFid.isNullOrBlank()) {
+                            userPreferencesRepository.saveFamilyId(currentFid)
+                        }
+                        userPreferencesRepository.saveChildDeviceMode(true, currentCid)
+                        navController.navigate(Screen.ChildPinSetup.route) { popUpTo(0) }
+                    }
+                }
+            )
+        }
+
         composable(Screen.ChildPinSetup.route) {
             ChildPinSetupScreen(
                 onPinSaved = { pin ->
                     scope.launch {
                         userPreferencesRepository.saveParentPinHash(pin)
-                        userPreferencesRepository.saveChildDeviceMode(true, activeChildId)
+                        val currentFid = session.familyId.value ?: storedFamilyId
+                        val currentCid = session.selectedChild.value?.id ?: storedChildId
+                        if (!currentFid.isNullOrBlank()) {
+                            userPreferencesRepository.saveFamilyId(currentFid)
+                        }
+                        userPreferencesRepository.saveChildDeviceMode(true, currentCid)
                         navController.navigate(Screen.ChildDashboard.route) { popUpTo(0) }
                     }
                 }
@@ -159,14 +230,35 @@ fun AppNavigation(
         composable(Screen.ChildDashboard.route) {
             ChildDashboardScreen(
                 childProfile = selectedChild,
-                onNavigateToProfile = { navController.navigate(Screen.Profile.route) }
+                familyId = familyId,
+                onNavigateToProfile = { navController.navigate(Screen.Profile.route) },
+                onPairThisPhone = { navController.navigate(Screen.ChildPairingCode.route) },
+                onLaunchLiveAi = { context.startActivity(android.content.Intent(context, com.tele.k_guard.live.LiveSessionActivity::class.java)) }
+            )
+        }
+
+        composable(Screen.ParentAssistant.route) {
+            val assistantViewModel: com.tele.k_guard.viewmodel.ParentAssistantViewModel = viewModel()
+            val children by session.children.collectAsState()
+            com.tele.k_guard.ui.screens.ParentAssistantScreen(
+                viewModel = assistantViewModel,
+                parentName = user?.displayName,
+                children = children,
+                onNavigateBack = { navController.popBackStack() }
             )
         }
 
         composable(Screen.Profile.route) {
+            val themeMode by userPreferencesRepository.themeModeFlow.collectAsState(initial = "SYSTEM")
             ProfileScreen(
                 session = session,
                 isChildDevice = isChildDevice,
+                themeMode = themeMode,
+                onThemeModeChange = { newMode ->
+                    scope.launch {
+                        userPreferencesRepository.saveThemeMode(newMode)
+                    }
+                },
                 onSignOut = {
                     scope.launch {
                         userPreferencesRepository.saveChildDeviceMode(false)
@@ -186,9 +278,18 @@ fun AppNavigation(
         }
 
         composable(Screen.Home.route) {
+            val children by session.children.collectAsState()
+            val currentFamilyId by session.familyId.collectAsState()
+
             HomeScreen(
                 activeAgeProfile = activeAgeProfile,
+                user = user,
                 activeChildName = selectedChild?.name,
+                activeChildPhotoUrl = selectedChild?.photoUrl,
+                children = children,
+                familyId = currentFamilyId,
+                selectedChild = selectedChild,
+                onSelectChild = { child -> session.selectChild(child.id) },
                 openAlertCount = openAlerts,
                 pendingApprovalCount = pendingApprovalsCount,
                 onNavigateToTextModeration = { navController.navigate(Screen.TextModeration.route) },
@@ -199,6 +300,8 @@ fun AppNavigation(
                 onNavigateToFlaggedContent = { navController.navigate(Screen.ReviewQueue.route) },
                 onNavigateToPrivacy = { navController.navigate(Screen.Privacy.route) },
                 onNavigateToWebProtection = { navController.navigate(Screen.WebProtection.route) },
+                onAddChild = { navController.navigate(Screen.ChildEditor.create(null)) },
+                onOpenAssistant = { navController.navigate(Screen.ParentAssistant.route) },
                 onNavigateToProfile = { navController.navigate(Screen.Profile.route) }
             )
         }
@@ -245,6 +348,9 @@ fun AppNavigation(
                 viewModel = screenTimeViewModel,
                 session = session,
                 activeAgeProfile = activeAgeProfile,
+                onNavigateToChildProfile = { childId ->
+                    navController.navigate(Screen.ChildEditor.create(childId))
+                },
                 onNavigateBack = { navController.popBackStack() }
             )
         }
@@ -283,6 +389,17 @@ fun AppNavigation(
 
         composable(Screen.Privacy.route) {
             PrivacyScreen(session = session, onNavigateBack = { navController.popBackStack() })
+        }
+
+        composable(
+            route = Screen.BlockedApp.route,
+            arguments = listOf(navArgument("appName") { type = NavType.StringType; defaultValue = "KidSafe App" })
+        ) { entry ->
+            val appName = entry.arguments?.getString("appName") ?: "KidSafe App"
+            BlockedAppScreen(
+                appName = appName,
+                onReturnHome = { navController.popBackStack() }
+            )
         }
     }
 }

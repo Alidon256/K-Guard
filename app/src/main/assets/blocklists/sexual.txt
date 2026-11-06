@@ -1,8 +1,35 @@
-# Starter list (replace with a maintained feed). One domain per line; subdomains match.
+# Adult and sexual content. Subdomains are matched too (www., m., etc.).
+# Starter list of well-known sites; for production, add a maintained feed (see docs).
 pornhub.com
 xvideos.com
 xnxx.com
 xhamster.com
 redtube.com
 youporn.com
+tube8.com
+spankbang.com
+eporner.com
+beeg.com
+youjizz.com
+tnaflix.com
+txxx.com
+hclips.com
+porntrex.com
+motherless.com
+porn.com
+brazzers.com
+realitykings.com
+chaturbate.com
+stripchat.com
+bongacams.com
+livejasmin.com
+cam4.com
+myfreecams.com
+camsoda.com
 onlyfans.com
+fansly.com
+manyvids.com
+adultfriendfinder.com
+rule34.xxx
+e-hentai.org
+nhentai.net

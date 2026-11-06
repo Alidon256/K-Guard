@@ -19,8 +19,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.NightsStay
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.SettingsBrightness
 import androidx.compose.material.icons.filled.SupervisorAccount
+import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -29,6 +33,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -37,9 +42,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import coil3.compose.AsyncImage
 import com.google.firebase.auth.FirebaseUser
 import com.tele.k_guard.data.model.ChildProfile
 import com.tele.k_guard.ui.components.KGuardTopAppBar
@@ -50,6 +58,8 @@ import com.tele.k_guard.viewmodel.SessionViewModel
 fun ProfileScreen(
     session: SessionViewModel,
     isChildDevice: Boolean,
+    themeMode: String = "SYSTEM",
+    onThemeModeChange: (String) -> Unit = {},
     onSignOut: () -> Unit,
     onNavigateBack: () -> Unit
 ) {
@@ -60,10 +70,9 @@ fun ProfileScreen(
         user = user,
         selectedChild = selectedChild,
         isChildDevice = isChildDevice,
-        onSignOut = {
-            session.signOut()
-            onSignOut()
-        },
+        themeMode = themeMode,
+        onThemeModeChange = onThemeModeChange,
+        onSignOut = { session.signOut(onDone = onSignOut) },
         onNavigateBack = onNavigateBack
     )
 }
@@ -73,9 +82,17 @@ fun ProfileContent(
     user: FirebaseUser?,
     selectedChild: ChildProfile?,
     isChildDevice: Boolean,
+    themeMode: String = "SYSTEM",
+    onThemeModeChange: (String) -> Unit = {},
     onSignOut: () -> Unit,
     onNavigateBack: () -> Unit
 ) {
+    val displayPhotoUrl = if (isChildDevice) {
+        selectedChild?.photoUrl?.takeIf { it.isNotBlank() } ?: user?.photoUrl?.toString()
+    } else {
+        user?.photoUrl?.toString()
+    }
+
     Scaffold(
         topBar = {
             KGuardTopAppBar(
@@ -99,17 +116,28 @@ fun ProfileContent(
             // Avatar & Name Card
             Box(
                 modifier = Modifier
-                    .size(80.dp)
+                    .size(96.dp)
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.primaryContainer),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = if (isChildDevice) Icons.Default.Person else Icons.Default.SupervisorAccount,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(40.dp)
-                )
+                if (!displayPhotoUrl.isNullOrBlank()) {
+                    AsyncImage(
+                        model = displayPhotoUrl,
+                        contentDescription = "Profile Photo",
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(CircleShape),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                    Icon(
+                        imageVector = if (isChildDevice) Icons.Default.Person else Icons.Default.SupervisorAccount,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(48.dp)
+                    )
+                }
             }
 
             Text(
@@ -133,7 +161,7 @@ fun ProfileContent(
                 )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(4.dp))
 
             // Details Card
             Card(
@@ -150,7 +178,76 @@ fun ProfileContent(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            // Theme Setting Card
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                elevation = CardDefaults.cardElevation(2.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Palette,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = "App Theme Preference",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "K-Guard Logo Color Palette",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        ThemeOptionChip(
+                            label = "System",
+                            icon = Icons.Default.SettingsBrightness,
+                            isSelected = themeMode == "SYSTEM",
+                            onClick = { onThemeModeChange("SYSTEM") },
+                            modifier = Modifier.weight(1f)
+                        )
+                        ThemeOptionChip(
+                            label = "Light",
+                            icon = Icons.Default.WbSunny,
+                            isSelected = themeMode == "LIGHT",
+                            onClick = { onThemeModeChange("LIGHT") },
+                            modifier = Modifier.weight(1f)
+                        )
+                        ThemeOptionChip(
+                            label = "Dark",
+                            icon = Icons.Default.NightsStay,
+                            isSelected = themeMode == "DARK",
+                            onClick = { onThemeModeChange("DARK") },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
 
             // Actions: Edit / Logout
             Button(
@@ -173,6 +270,42 @@ fun ProfileContent(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Log Out", fontWeight = FontWeight.Bold)
             }
+        }
+    }
+}
+
+@Composable
+private fun ThemeOptionChip(
+    label: String,
+    icon: ImageVector,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val backgroundColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
+    val contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+
+    Surface(
+        onClick = onClick,
+        modifier = modifier.height(44.dp),
+        shape = RoundedCornerShape(12.dp),
+        color = backgroundColor,
+        contentColor = contentColor
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 8.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+            )
         }
     }
 }

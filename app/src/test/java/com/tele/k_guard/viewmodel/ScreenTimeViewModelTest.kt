@@ -1,134 +1,85 @@
 package com.tele.k_guard.viewmodel
 
-import com.tele.k_guard.data.model.AgeProfile
+import com.tele.k_guard.data.model.ChildDevice
 import com.tele.k_guard.data.model.DeviceLockState
-import com.tele.k_guard.data.model.RemoteAction
-import com.tele.k_guard.data.repository.ParentalControlsRepository
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
+import com.tele.k_guard.data.repository.ScreenTimeRepository
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Before
 import org.junit.Test
 
+/** What the parent's screen shows is parsed from the child's device document; nothing is invented. */
 class ScreenTimeViewModelTest {
 
-    private lateinit var viewModel: ScreenTimeViewModel
-    private val repository = ParentalControlsRepository
-
-    @Before
-    fun setUp() {
-        val testScope = CoroutineScope(Dispatchers.Unconfined)
-        viewModel = ScreenTimeViewModel(repository, testScope)
-        viewModel.selectChild("c1", "Ama")
+    @Test
+    fun noDocumentMeansNothingReportedYet() {
+        val d = ScreenTimeRepository.parseDevice("c1", "Ama", null)
+        assertFalse(d.hasReported)
+        assertFalse(d.isOnline)
+        assertEquals(-1, d.batteryPercent)
+        assertNull(d.currentForegroundApp)
+        assertEquals(0, d.dailyLimitMinutes)
+        assertFalse(d.bedtimeEnabled)
+        assertTrue(d.missingProtections.isEmpty())
     }
 
     @Test
-    fun initialDeviceHasCorrectAttributes() {
-        val dev = viewModel.currentDevice.value
-        assertEquals("c1", dev.childId)
-        assertEquals("Ama", dev.childName)
-        assertEquals("Samsung Galaxy A14 5G", dev.deviceModel)
-        assertTrue(dev.isOnline)
-        assertEquals(78, dev.batteryPercent)
-        assertEquals(DeviceLockState.ACTIVE_UNLOCKED, dev.lockState)
+    fun parsesRulesAndReportedLock() {
+        val d = ScreenTimeRepository.parseDevice(
+            "c1", "Ama",
+            mapOf(
+                "dailyLimitMinutes" to 90,
+                "bonusMinutes" to 30,
+                "bonusDate" to "2026-11-06",
+                "usageDate" to "2026-11-06",
+                "usedScreenTimeMinutes" to 100,
+                "bedtimeEnabled" to true,
+                "bedtimeStart" to "20:30",
+                "lockState" to "bedtime_locked",
+                "lastSyncedAt" to com.google.firebase.Timestamp(java.util.Date()),
+                "remoteLock" to mapOf("locked" to true, "reason" to "Dinner"),
+                "permissions" to mapOf("overlay" to false, "usageAccess" to true)
+            )
+        )
+        assertEquals(120, d.effectiveLimitMinutes)
+        assertEquals(20, d.remainingMinutes)
+        assertTrue(d.bedtimeEnabled)
+        assertEquals("20:30", d.bedtimeStart)
+        assertEquals(DeviceLockState.BEDTIME_LOCKED, d.lockState)
+        assertTrue(d.screenLock.isLocked)
+        assertEquals("Dinner", d.screenLock.lockReason)
     }
 
     @Test
-    fun selectChildSwitchesDevice() {
-        viewModel.selectChild("c2", "Kofi")
-        val dev = viewModel.currentDevice.value
-        assertEquals("c2", dev.childId)
-        assertEquals("Kofi", dev.childName)
-        assertEquals("Google Pixel 6a", dev.deviceModel)
-        assertEquals(42, dev.batteryPercent)
-        assertTrue(dev.isCharging)
+    fun lockStateIsIgnoredUntilThePhoneHasReported() {
+        // Left over from older builds that wrote lockState from the parent's side.
+        val d = ScreenTimeRepository.parseDevice("c1", "Ama", mapOf("lockState" to "remote_locked", "lockReason" to "Bedtime / Sleep"))
+        assertEquals(DeviceLockState.ACTIVE_UNLOCKED, d.lockState)
+        assertNull(d.lockReason)
+        assertFalse(d.isLocked)
     }
 
     @Test
-    fun remoteSwitchOffLocksDeviceAndLogsCommand() {
-        viewModel.selectChild("c1", "Ama")
-        val reason = "Dinner Time"
-        viewModel.remoteSwitchOff("c1", reason)
-
-        val dev = viewModel.currentDevice.value
-        assertEquals(DeviceLockState.REMOTE_LOCKED, dev.lockState)
-        assertFalse(dev.isScreenOn)
-        assertEquals(reason, dev.lockReason)
-        assertTrue(dev.isLocked)
-
-        // Verify command log
-        val latestCmd = viewModel.commandHistory.value.firstOrNull()
-        assertNotNull(latestCmd)
-        assertEquals(RemoteAction.SWITCH_OFF_LOCK, latestCmd?.action)
-        assertEquals("c1", latestCmd?.childId)
-        assertEquals(reason, latestCmd?.reason)
+    fun bonusFromAnotherDayDoesNotCount() {
+        val d = ScreenTimeRepository.parseDevice(
+            "c1", "Ama",
+            mapOf("dailyLimitMinutes" to 60, "bonusMinutes" to 30, "bonusDate" to "2026-11-05", "usageDate" to "2026-11-06")
+        )
+        assertEquals(60, d.effectiveLimitMinutes)
     }
 
     @Test
-    fun remoteUnlockRestoresDevice() {
-        viewModel.selectChild("c1", "Ama")
-        viewModel.remoteSwitchOff("c1", "Bedtime")
-        assertTrue(viewModel.currentDevice.value.isLocked)
-
-        viewModel.remoteUnlock("c1")
-        val dev = viewModel.currentDevice.value
-        assertEquals(DeviceLockState.ACTIVE_UNLOCKED, dev.lockState)
-        assertTrue(dev.isScreenOn)
-        assertFalse(dev.isLocked)
-
-        val latestCmd = viewModel.commandHistory.value.firstOrNull()
-        assertEquals(RemoteAction.UNLOCK_DEVICE, latestCmd?.action)
+    fun noLimitMeansNoProgress() {
+        val d = ChildDevice(usedScreenTimeMinutes = 500)
+        assertEquals(0f, d.usageProgress)
+        assertEquals(0, d.remainingMinutes)
     }
 
     @Test
-    fun addBonusTimeIncreasesLimit() {
-        viewModel.selectChild("c1", "Ama")
-        val initialLimit = viewModel.currentDevice.value.dailyLimitMinutes
-        viewModel.addBonusTime("c1", 30)
-
-        val updatedLimit = viewModel.currentDevice.value.dailyLimitMinutes
-        assertEquals(initialLimit + 30, updatedLimit)
-
-        val latestCmd = viewModel.commandHistory.value.firstOrNull()
-        assertEquals(RemoteAction.ADD_BONUS_TIME, latestCmd?.action)
-    }
-
-    @Test
-    fun soundAlarmDispatchesCommand() {
-        viewModel.selectChild("c2", "Kofi")
-        viewModel.remoteSoundAlarm("c2")
-
-        val latestCmd = viewModel.commandHistory.value.firstOrNull()
-        assertEquals(RemoteAction.SOUND_ALARM, latestCmd?.action)
-        assertEquals("c2", latestCmd?.childId)
-    }
-
-    @Test
-    fun applyAgeRecommendationSetsDefaultLimit() {
-        viewModel.selectChild("c1", "Ama")
-        viewModel.applyAgeRecommendation("c1", AgeProfile.KIDS_3_7)
-        assertEquals(60, viewModel.currentDevice.value.dailyLimitMinutes)
-
-        viewModel.applyAgeRecommendation("c1", AgeProfile.PRETEENS_8_12)
-        assertEquals(90, viewModel.currentDevice.value.dailyLimitMinutes)
-    }
-
-    @Test
-    fun schedulesUpdateCorrectly() {
-        viewModel.selectChild("c1", "Ama")
-        viewModel.updateBedtimeSchedule("c1", "21:30", "07:30", true)
-        val dev = viewModel.currentDevice.value
-        assertEquals("21:30", dev.bedtimeStart)
-        assertEquals("07:30", dev.bedtimeEnd)
-        assertTrue(dev.bedtimeEnabled)
-
-        viewModel.updateSchoolSchedule("c1", "08:00", "15:00", false)
-        val dev2 = viewModel.currentDevice.value
-        assertEquals("08:00", dev2.schoolStart)
-        assertEquals("15:00", dev2.schoolEnd)
-        assertFalse(dev2.schoolEnabled)
+    fun durationsReadNaturally() {
+        assertEquals("30 min", ScreenTimeRepository.formatDuration(30))
+        assertEquals("1 hour", ScreenTimeRepository.formatDuration(60))
+        assertEquals("1h 30m", ScreenTimeRepository.formatDuration(90))
     }
 }

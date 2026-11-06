@@ -60,6 +60,11 @@ object FamilyRepository {
         auth.signOut()
     }
 
+    suspend fun getUserDoc(uid: String): Map<String, Any?>? {
+        val snap = db.document("users/$uid").get().await()
+        return snap.data
+    }
+
     /** Creates the family on first sign-in (server side) and returns its id. */
     suspend fun ensureFamily(): String {
         Log.d("KGuard", "FamilyRepository: ensureFamily calling createFamily Cloud Function")
@@ -91,6 +96,21 @@ object FamilyRepository {
         awaitClose { reg.remove() }
     }
 
+    /** A paired child's own profile. Firestore rules let a child read only the profile linked to it. */
+    fun linkedChild(familyId: String, uid: String): Flow<List<ChildProfile>> = callbackFlow {
+        val reg = db.collection("families/$familyId/children")
+            .whereEqualTo("linkedUid", uid)
+            .addSnapshotListener { snap, err ->
+                if (err != null) {
+                    Log.e("KGuard", "FamilyRepository: linked child listener error", err)
+                    close(err)
+                    return@addSnapshotListener
+                }
+                trySend(snap?.documents.orEmpty().mapNotNull { d -> d.toObject(ChildProfile::class.java)?.copy(id = d.id) })
+            }
+        awaitClose { reg.remove() }
+    }
+
     suspend fun saveChild(familyId: String, child: ChildProfile): String {
         Log.d("KGuard", "FamilyRepository: saveChild familyId=$familyId, childId=${child.id}, name=${child.name}")
         val col = db.collection("families/$familyId/children")
@@ -113,6 +133,10 @@ object FamilyRepository {
             child.id
         }
         return id
+    }
+
+    suspend fun updateChildPhoto(familyId: String, childId: String, photoUrl: String) {
+        db.document("families/$familyId/children/$childId").update("photoUrl", photoUrl).await()
     }
 
     suspend fun deleteChild(familyId: String, childId: String) {
@@ -221,6 +245,19 @@ object FamilyRepository {
     }
 
     // ---------- push ----------
+    /**
+     * Sign-out: stop this phone receiving the account's alerts. Removes its token from the account, then deletes
+     * the token so the next account to sign in on this phone gets a fresh one.
+     */
+    suspend fun unregisterPushToken() {
+        val uid = currentUser?.uid ?: return
+        runCatching {
+            val t = FirebaseMessaging.getInstance().token.await()
+            db.document("users/$uid").update("fcmTokens", FieldValue.arrayRemove(t)).await()
+        }.onFailure { Log.w("KGuard", "FamilyRepository: could not remove push token", it) }
+        runCatching { FirebaseMessaging.getInstance().deleteToken().await() }
+    }
+
     suspend fun registerPushToken(token: String? = null) {
         val uid = currentUser?.uid ?: return
         val t = token ?: FirebaseMessaging.getInstance().token.await()

@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Warning
@@ -29,6 +30,8 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -49,6 +52,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.res.painterResource
+import com.tele.k_guard.R
 import com.tele.k_guard.data.model.AgeProfile
 import com.tele.k_guard.data.model.ModerationDecision
 import com.tele.k_guard.data.model.ModerationResponse
@@ -59,31 +66,83 @@ fun KGuardTopAppBar(
     title: String,
     canNavigateBack: Boolean = false,
     onNavigateBack: () -> Unit = {},
+    isSearchActive: Boolean = false,
+    searchQuery: String = "",
+    onSearchQueryChange: (String) -> Unit = {},
+    onSearchActiveChange: (Boolean) -> Unit = {},
     actions: @Composable () -> Unit = {}
 ) {
-    TopAppBar(
-        title = {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
-            )
-        },
-        navigationIcon = {
-            if (canNavigateBack) {
-                IconButton(onClick = onNavigateBack) {
+    if (isSearchActive) {
+        TopAppBar(
+            title = {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = onSearchQueryChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("Search apps...", style = MaterialTheme.typography.bodyMedium) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color.Transparent,
+                        unfocusedBorderColor = Color.Transparent
+                    )
+                )
+            },
+            navigationIcon = {
+                IconButton(onClick = {
+                    onSearchQueryChange("")
+                    onSearchActiveChange(false)
+                }) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Navigate Back"
+                        contentDescription = "Close Search"
                     )
                 }
-            }
-        },
-        actions = { actions() },
-        colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
+            },
+            actions = {
+                if (searchQuery.isNotEmpty()) {
+                    IconButton(onClick = { onSearchQueryChange("") }) {
+                        Icon(Icons.Default.Close, contentDescription = "Clear Search")
+                    }
+                }
+            },
+            colors = TopAppBarDefaults.topAppBarColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            )
         )
-    )
+    } else {
+        TopAppBar(
+            title = {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            navigationIcon = {
+                if (canNavigateBack) {
+                    IconButton(onClick = onNavigateBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Navigate Back"
+                        )
+                    }
+                } else {
+                    Image(
+                        painter = painterResource(id = R.drawable.logo_inapp),
+                        contentDescription = "K-Guard Logo",
+                        modifier = Modifier
+                            .padding(start = 12.dp, end = 4.dp)
+                            .size(32.dp)
+                            .clip(CircleShape)
+                        )
+                }
+            },
+            actions = { actions() },
+            colors = TopAppBarDefaults.topAppBarColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        )
+    }
 }
 
 private data class DecisionStyle(

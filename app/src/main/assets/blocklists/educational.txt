@@ -1,11 +1,18 @@
-# Educational allow-list (starter). Allowed even if a category list would block them.
+# Always allowed when "Educational sites" is on, even if a category list matches.
 wikipedia.org
-khanacademy.org
+wikimedia.org
+wiktionary.org
 britannica.com
+khanacademy.org
 nationalgeographic.com
 kidshealth.org
-who.int
-nhs.uk
-cdc.gov
 stopbullying.gov
 childline.org.uk
+who.int
+nih.gov
+cdc.gov
+ted.com
+coursera.org
+duolingo.com
+scratch.mit.edu
+code.org

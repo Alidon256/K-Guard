@@ -15,11 +15,20 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BatteryUnknown
+import androidx.compose.material.icons.filled.BatteryAlert
+import androidx.compose.material.icons.filled.Battery3Bar
+import androidx.compose.material.icons.filled.Battery5Bar
+import androidx.compose.material.icons.filled.SignalCellularOff
+import androidx.compose.material.icons.filled.SignalCellularAlt
+import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BatteryChargingFull
@@ -27,7 +36,9 @@ import androidx.compose.material.icons.filled.BatteryFull
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.MoreTime
@@ -36,11 +47,13 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.School
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Wifi
+import com.tele.k_guard.ui.components.PhoneLockDialog
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -101,6 +114,7 @@ fun ScreenTimeScreen(
     viewModel: ScreenTimeViewModel,
     session: SessionViewModel? = null,
     activeAgeProfile: AgeProfile = AgeProfile.PRETEENS_8_12,
+    onNavigateToChildProfile: (String) -> Unit = {},
     onNavigateBack: () -> Unit
 ) {
     val device by viewModel.currentDevice.collectAsState()
@@ -111,17 +125,25 @@ fun ScreenTimeScreen(
     val selectedChildFromSession = session?.selectedChild?.collectAsState()?.value
     val familyId = session?.familyId?.collectAsState()?.value
 
-    val children = if (!childrenFromSession.isNullOrEmpty()) childrenFromSession else listOf(
-        ChildProfile("c1", "Ama", AgeProfile.PRETEENS_8_12.id),
-        ChildProfile("c2", "Kofi", AgeProfile.TEENS_13_17.id)
-    )
+    val children = childrenFromSession.orEmpty()
+    val appActivity by viewModel.appActivity.collectAsState()
 
-    // Sync family and selected child from session
-    LaunchedEffect(familyId, selectedChildFromSession) {
+    // Follow the child selected in the session; write age-based starting rules the first time.
+    LaunchedEffect(familyId, selectedChildFromSession?.id) {
         val child = selectedChildFromSession ?: children.firstOrNull()
-        if (child != null) {
+        if (child != null && familyId != null) {
             viewModel.setFamilyAndChild(familyId, child.id, child.name)
+            viewModel.initializeDefaultsIfNeeded(child.age)
         }
+    }
+
+    if (children.isEmpty()) {
+        Scaffold(topBar = { KGuardTopAppBar(title = "Screen Time", canNavigateBack = true, onNavigateBack = onNavigateBack) }) { p ->
+            Box(Modifier.fillMaxSize().padding(p).padding(24.dp), contentAlignment = Alignment.Center) {
+                Text("Add a child profile and pair their phone to manage screen time.", style = MaterialTheme.typography.bodyLarge)
+            }
+        }
+        return
     }
 
     val snackbarHostState = remember { SnackbarHostState() }
@@ -142,7 +164,9 @@ fun ScreenTimeScreen(
             viewModel.selectChild(child.id, child.name)
             session?.selectChild(child.id)
         },
+        onNavigateToChildProfile = onNavigateToChildProfile,
         onRemoteSwitchOff = { reason -> viewModel.remoteSwitchOff(device.childId, reason) },
+        onRemoteTimedLock = { h, m -> viewModel.remoteTimedLock(device.childId, h, m) },
         onRemoteUnlock = { viewModel.remoteUnlock(device.childId) },
         onRemoteSoundAlarm = { viewModel.remoteSoundAlarm(device.childId) },
         onAddBonusTime = { minutes -> viewModel.addBonusTime(device.childId, minutes) },
@@ -150,6 +174,9 @@ fun ScreenTimeScreen(
         onApplyAgeRecommendation = { viewModel.applyAgeRecommendation(device.childId, activeAgeProfile) },
         onToggleBedtime = { enabled -> viewModel.updateBedtimeSchedule(device.childId, device.bedtimeStart, device.bedtimeEnd, enabled) },
         onToggleSchoolMode = { enabled -> viewModel.updateSchoolSchedule(device.childId, device.schoolStart, device.schoolEnd, enabled) },
+        onChangeBedtime = { start, end -> viewModel.updateBedtimeSchedule(device.childId, start, end, true) },
+        onChangeSchoolHours = { start, end -> viewModel.updateSchoolSchedule(device.childId, start, end, true) },
+        appActivity = appActivity,
         onNavigateBack = onNavigateBack,
         snackbarHostState = snackbarHostState
     )
@@ -163,7 +190,9 @@ fun ScreenTimeDashboardContent(
     activeAgeProfile: AgeProfile,
     commandHistory: List<RemoteCommand>,
     onSelectChild: (ChildProfile) -> Unit,
+    onNavigateToChildProfile: (String) -> Unit = {},
     onRemoteSwitchOff: (String) -> Unit,
+    onRemoteTimedLock: (Int, Int) -> Unit = { _, _ -> },
     onRemoteUnlock: () -> Unit,
     onRemoteSoundAlarm: () -> Unit,
     onAddBonusTime: (Int) -> Unit,
@@ -172,12 +201,18 @@ fun ScreenTimeDashboardContent(
     onToggleBedtime: (Boolean) -> Unit,
     onToggleSchoolMode: (Boolean) -> Unit,
     onNavigateBack: () -> Unit,
-    snackbarHostState: SnackbarHostState = remember { SnackbarHostState() }
+    snackbarHostState: SnackbarHostState = remember { SnackbarHostState() },
+    onChangeBedtime: (String, String) -> Unit = { _, _ -> },
+    onChangeSchoolHours: (String, String) -> Unit = { _, _ -> },
+    appActivity: List<com.tele.k_guard.data.repository.AppActivity> = emptyList()
 ) {
     var showSwitchOffDialog by remember { mutableStateOf(false) }
+    var showTimedLockDialog by remember { mutableStateOf(false) }
     var selectedReason by remember { mutableStateOf("Dinner Time") }
     var customReason by remember { mutableStateOf("") }
     var activeTab by remember { mutableIntStateOf(0) } // 0: Controls & Status, 1: Apps & Breakdown, 2: Schedules, 3: History
+
+    val selectedChild = children.find { it.id == selectedChildId } ?: children.firstOrNull()
 
     Scaffold(
         topBar = {
@@ -195,18 +230,24 @@ fun ScreenTimeDashboardContent(
                 .padding(innerPadding)
                 .verticalScroll(rememberScrollState())
         ) {
-            // 1. Connected Children Device Switcher
+            // 1. Connected Children Device Switcher (only shown when multiple children exist)
             ChildrenDeviceSelector(
                 children = children,
                 selectedChildId = selectedChildId,
-                onSelectChild = onSelectChild
+                selectedOnline = device.isOnline,
+                onSelectChild = onSelectChild,
+                onNavigateToChildProfile = onNavigateToChildProfile
             )
 
             Column(modifier = Modifier.padding(16.dp)) {
 
+                com.tele.k_guard.ui.components.ChildPhoneHealthCard(device = device, modifier = Modifier.padding(bottom = 16.dp))
+
                 // 2. Connected Phone Telemetry & Live Status Card
                 ConnectedPhoneStatusCard(
                     device = device,
+                    childProfile = selectedChild,
+                    onNavigateToChildProfile = onNavigateToChildProfile,
                     onSoundAlarm = onRemoteSoundAlarm
                 )
 
@@ -216,38 +257,46 @@ fun ScreenTimeDashboardContent(
                 RemoteSwitchOffHeroCard(
                     device = device,
                     onOpenSwitchOffDialog = { showSwitchOffDialog = true },
+                    onOpenTimedLockDialog = { showTimedLockDialog = true },
                     onRemoteUnlock = onRemoteUnlock,
                     onAddBonusTime = onAddBonusTime
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Tab Row for Deep Management
-                TabRow(
-                    selectedTabIndex = activeTab,
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    contentColor = MaterialTheme.colorScheme.primary
+                // WhatsApp Style Filter Tabs Row for Deep Management
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(vertical = 4.dp)
                 ) {
-                    Tab(
-                        selected = activeTab == 0,
-                        onClick = { activeTab = 0 },
-                        text = { Text("Screen Limits", fontWeight = FontWeight.SemiBold) }
-                    )
-                    Tab(
-                        selected = activeTab == 1,
-                        onClick = { activeTab = 1 },
-                        text = { Text("Apps Today", fontWeight = FontWeight.SemiBold) }
-                    )
-                    Tab(
-                        selected = activeTab == 2,
-                        onClick = { activeTab = 2 },
-                        text = { Text("Schedules", fontWeight = FontWeight.SemiBold) }
-                    )
-                    Tab(
-                        selected = activeTab == 3,
-                        onClick = { activeTab = 3 },
-                        text = { Text("Command Log", fontWeight = FontWeight.SemiBold) }
-                    )
+                    item {
+                        WhatsAppFilterChip(
+                            selected = activeTab == 0,
+                            onClick = { activeTab = 0 },
+                            label = "Screen Limits"
+                        )
+                    }
+                    item {
+                        WhatsAppFilterChip(
+                            selected = activeTab == 1,
+                            onClick = { activeTab = 1 },
+                            label = "Apps Today"
+                        )
+                    }
+                    item {
+                        WhatsAppFilterChip(
+                            selected = activeTab == 2,
+                            onClick = { activeTab = 2 },
+                            label = "Schedules"
+                        )
+                    }
+                    item {
+                        WhatsAppFilterChip(
+                            selected = activeTab == 3,
+                            onClick = { activeTab = 3 },
+                            label = "Command Log"
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -265,13 +314,17 @@ fun ScreenTimeDashboardContent(
                     1 -> {
                         // Live Apps Breakdown
                         AppUsageBreakdownSection(device = device)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        com.tele.k_guard.ui.components.AppActivitySection(appActivity, device.childName)
                     }
                     2 -> {
                         // Schedules & Focus Modes
                         SchedulesSection(
                             device = device,
                             onToggleBedtime = onToggleBedtime,
-                            onToggleSchoolMode = onToggleSchoolMode
+                            onToggleSchoolMode = onToggleSchoolMode,
+                            onChangeBedtime = onChangeBedtime,
+                            onChangeSchoolHours = onChangeSchoolHours
                         )
                     }
                     3 -> {
@@ -316,7 +369,7 @@ fun ScreenTimeDashboardContent(
             text = {
                 Column {
                     Text(
-                        text = "This will remotely turn off the screen, lock ${device.deviceModel}, and pause app access immediately.",
+                        text = "${device.childName}'s phone switches its screen off and shows a lock screen until you unlock it. Emergency calls stay available.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -380,6 +433,47 @@ fun ScreenTimeDashboardContent(
             }
         )
     }
+
+    // Timed Screen Lockout Dialog
+    if (showTimedLockDialog) {
+        PhoneLockDialog(
+            childName = device.childName,
+            onDismiss = { showTimedLockDialog = false },
+            onLockConfirm = { hours, minutes, isImmediate ->
+                if (isImmediate) {
+                    onRemoteSwitchOff("Immediate Remote Screen Lock")
+                } else {
+                    onRemoteTimedLock(hours, minutes)
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun WhatsAppFilterChip(
+    selected: Boolean,
+    onClick: () -> Unit,
+    label: String
+) {
+    Box(
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(
+                if (selected) MaterialTheme.colorScheme.primaryContainer
+                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+            )
+            .clickable { onClick() }
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
 }
 
 // ---------------- UI COMPONENTS ----------------
@@ -388,61 +482,82 @@ fun ScreenTimeDashboardContent(
 fun ChildrenDeviceSelector(
     children: List<ChildProfile>,
     selectedChildId: String,
-    onSelectChild: (ChildProfile) -> Unit
+    /** Whether the selected child's phone is connected; other children's status is not loaded here. */
+    selectedOnline: Boolean = false,
+    onSelectChild: (ChildProfile) -> Unit,
+    onNavigateToChildProfile: (String) -> Unit = {}
 ) {
-    Row(
+    if (children.size <= 1) return
+
+    LazyRow(
         modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+            .padding(vertical = 8.dp, horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        children.forEach { child ->
+        items(children) { child ->
             val isSelected = child.id == selectedChildId
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
-                shadowElevation = if (isSelected) 3.dp else 1.dp,
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
-                    .clip(RoundedCornerShape(20.dp))
-                    .clickable { onSelectChild(child) }
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable {
+                        if (isSelected) {
+                            onNavigateToChildProfile(child.id)
+                        } else {
+                            onSelectChild(child)
+                        }
+                    }
+                    .padding(horizontal = 4.dp, vertical = 4.dp)
+                    .width(68.dp)
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Box(contentAlignment = Alignment.TopEnd) {
                     Box(
                         modifier = Modifier
-                            .size(24.dp)
+                            .size(52.dp)
                             .clip(CircleShape)
-                            .background(if (isSelected) Color.White.copy(alpha = 0.25f) else MaterialTheme.colorScheme.primaryContainer),
+                            .border(
+                                width = if (isSelected) 3.dp else 1.dp,
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                                shape = CircleShape
+                            )
+                            .padding(if (isSelected) 3.dp else 0.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (isSelected) MaterialTheme.colorScheme.primaryContainer 
+                                else MaterialTheme.colorScheme.surfaceVariant
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            Icons.Default.Person,
-                            contentDescription = null,
-                            tint = if (isSelected) Color.White else MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(14.dp)
+                        com.tele.k_guard.ui.components.ChildAvatar(
+                            name = child.name,
+                            photoUrl = child.photoUrl,
+                            size = 52.dp
                         )
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = child.name,
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                        color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    // Online indicator dot
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(if (isSelected) Color(0xFF4ADE80) else Color(0xFF22C55E))
-                    )
+
+                    if (isSelected && selectedOnline) {
+                        Box(
+                            modifier = Modifier
+                                .size(12.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF4ADE80))
+                                .border(2.dp, MaterialTheme.colorScheme.surface, CircleShape)
+                        )
+                    }
                 }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Text(
+                    text = child.name,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }
@@ -451,6 +566,8 @@ fun ChildrenDeviceSelector(
 @Composable
 fun ConnectedPhoneStatusCard(
     device: ChildDevice,
+    childProfile: ChildProfile? = null,
+    onNavigateToChildProfile: (String) -> Unit = {},
     onSoundAlarm: () -> Unit
 ) {
     Card(
@@ -461,70 +578,155 @@ fun ConnectedPhoneStatusCard(
         )
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            // Header: Model & Online Pill
+            // Header: Child Avatar + Model & Online Pill
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                // Takes the space left by the badges; a long device name is shortened rather than squeezing them.
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                     Box(
                         modifier = Modifier
-                            .size(42.dp)
                             .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primaryContainer),
-                        contentAlignment = Alignment.Center
+                            .clickable {
+                                val targetId = childProfile?.id ?: device.childId
+                                if (targetId.isNotBlank()) onNavigateToChildProfile(targetId)
+                            },
+                        contentAlignment = Alignment.BottomEnd
                     ) {
-                        Icon(
-                            Icons.Default.PhoneAndroid,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
-                        )
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            com.tele.k_guard.ui.components.ChildAvatar(
+                                name = childProfile?.name ?: device.childName.ifBlank { "Child" },
+                                photoUrl = childProfile?.photoUrl,
+                                size = 48.dp
+                            )
+                        }
+
                     }
+
                     Spacer(modifier = Modifier.width(12.dp))
+
                     Column {
                         Text(
-                            text = device.deviceName,
+                            text = device.deviceName.ifBlank { "${device.childName.ifBlank { "Child" }}'s phone" },
                             style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = "${device.deviceModel} · ${device.androidVersion}",
+                            text = if (device.hasReported) "${device.deviceModel} · ${device.androidVersion}" else "Not connected yet",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
 
-                // Online badge
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = if (device.isOnline) Color(0xFFDCFCE7) else Color(0xFFF1F5F9)
+                // Status badges: Device Admin & Online
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    // Admin Protection badge
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (device.isDeviceAdminActive) Color(0xFFE0E7FF) else Color(0xFFFEF3C7)
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(7.dp)
-                                .clip(CircleShape)
-                                .background(if (device.isOnline) Color(0xFF16A34A) else Color(0xFF64748B))
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = if (device.isOnline) "ONLINE" else "OFFLINE",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = if (device.isOnline) Color(0xFF15803D) else Color(0xFF64748B)
-                        )
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = if (device.isDeviceAdminActive) Icons.Default.Shield else Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = if (device.isDeviceAdminActive) Color(0xFF4F46E5) else Color(0xFFD97706),
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = if (!device.hasReported) "NOT PAIRED" else if (device.isDeviceAdminActive) "ADMIN" else "NO ADMIN",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = if (device.isDeviceAdminActive) Color(0xFF4338CA) else Color(0xFFB45309),
+                                fontSize = 10.sp
+                            )
+                        }
+                    }
+
+                    // Online badge
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (device.isOnline) Color(0xFFDCFCE7) else Color(0xFFF1F5F9)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(7.dp)
+                                    .clip(CircleShape)
+                                    .background(if (device.isOnline) Color(0xFF16A34A) else Color(0xFF64748B))
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = if (device.isOnline) "ONLINE" else "OFFLINE",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                softWrap = false,
+                                color = if (device.isOnline) Color(0xFF15803D) else Color(0xFF64748B)
+                            )
+                        }
                     }
                 }
             }
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Telemetry Badges: Battery, Network, Screen State
+            // Telemetry: battery, network, unlocks. Icons and colours follow what the phone reported;
+            // when it is offline the values are marked with the time they were reported.
+            val known = device.hasReported
+            val stale = known && !device.isOnline
+            val grey = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+            val batteryIcon = when {
+                !known || device.batteryPercent < 0 -> Icons.Default.BatteryUnknown
+                device.isCharging -> Icons.Default.BatteryChargingFull
+                device.batteryPercent <= 15 -> Icons.Default.BatteryAlert
+                device.batteryPercent <= 40 -> Icons.Default.Battery3Bar
+                device.batteryPercent <= 70 -> Icons.Default.Battery5Bar
+                else -> Icons.Default.BatteryFull
+            }
+            val batteryTint = when {
+                !known || device.batteryPercent < 0 || stale -> grey
+                device.isCharging -> Color(0xFF16A34A)
+                device.batteryPercent <= 15 -> Color(0xFFDC2626)
+                device.batteryPercent <= 30 -> Color(0xFFD97706)
+                else -> Color(0xFF16A34A)
+            }
+            val net = device.networkName
+            val networkIcon = when {
+                !known -> Icons.Default.SignalCellularOff
+                net.startsWith("Wi-Fi") -> Icons.Default.Wifi
+                net.startsWith("Mobile") -> Icons.Default.SignalCellularAlt
+                net == "Offline" -> Icons.Default.WifiOff
+                else -> Icons.Default.Smartphone
+            }
+            if (stale) {
+                Text(
+                    "As of ${com.tele.k_guard.ui.components.lastSeen(device)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 6.dp)
+                )
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -540,16 +742,16 @@ fun ConnectedPhoneStatusCard(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
-                            if (device.isCharging) Icons.Default.BatteryChargingFull else Icons.Default.BatteryFull,
+                            batteryIcon,
                             contentDescription = null,
-                            tint = if (device.batteryPercent > 20) Color(0xFF16A34A) else Color(0xFFDC2626),
+                            tint = batteryTint,
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Column {
                             Text("Battery", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text(
-                                "${device.batteryPercent}%${if (device.isCharging) " ⚡" else ""}",
+                                if (!known || device.batteryPercent < 0) "—" else "${device.batteryPercent}%${if (device.isCharging) " · charging" else ""}",
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold
                             )
@@ -568,16 +770,16 @@ fun ConnectedPhoneStatusCard(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
-                            Icons.Default.Wifi,
+                            networkIcon,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
+                            tint = if (!known || stale || net == "Offline") grey else MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Column {
                             Text("Network", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text(
-                                device.networkName,
+                                if (!known) "—" else net.ifBlank { "—" },
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
@@ -605,9 +807,9 @@ fun ConnectedPhoneStatusCard(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Column {
-                            Text("Pickups", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("Unlocks today", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text(
-                                "${device.pickupsCount} times",
+                                if (!known) "—" else "${device.pickupsCount}",
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold
                             )
@@ -639,19 +841,24 @@ fun ConnectedPhoneStatusCard(
                                 .size(8.dp)
                                 .clip(CircleShape)
                                 .background(
-                                    when (device.lockState) {
-                                        DeviceLockState.REMOTE_LOCKED -> Color(0xFFDC2626)
-                                        DeviceLockState.ACTIVE_UNLOCKED -> Color(0xFF16A34A)
+                                    when {
+                                        !device.hasReported || !device.isOnline -> Color(0xFF94A3B8)
+                                        device.lockState == DeviceLockState.REMOTE_LOCKED -> Color(0xFFDC2626)
+                                        device.lockState == DeviceLockState.ACTIVE_UNLOCKED -> Color(0xFF16A34A)
                                         else -> Color(0xFFEAB308)
                                     }
                                 )
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = when (device.lockState) {
-                                DeviceLockState.REMOTE_LOCKED -> "Screen is Switched Off · Locked Remotely"
-                                DeviceLockState.ACTIVE_UNLOCKED -> "Screen is ON · Currently using ${device.currentForegroundApp ?: "Apps"}"
-                                else -> device.lockState.label
+                            text = when {
+                                !device.hasReported -> "No report from the phone yet"
+                                !device.isOnline -> "Offline · last seen ${com.tele.k_guard.ui.components.lastSeen(device)}"
+                                device.lockState == DeviceLockState.REMOTE_LOCKED -> "Locked by you"
+                                device.lockState == DeviceLockState.BEDTIME_LOCKED -> "Locked for bedtime"
+                                device.lockState == DeviceLockState.LIMIT_REACHED -> "Locked · daily limit reached"
+                                device.currentForegroundApp != null -> "Using ${device.currentForegroundApp}"
+                                else -> "Unlocked · no app open"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Medium,
@@ -682,10 +889,24 @@ fun ConnectedPhoneStatusCard(
 fun RemoteSwitchOffHeroCard(
     device: ChildDevice,
     onOpenSwitchOffDialog: () -> Unit,
+    onOpenTimedLockDialog: () -> Unit = {},
     onRemoteUnlock: () -> Unit,
     onAddBonusTime: (Int) -> Unit
 ) {
-    val isLocked = device.lockState == DeviceLockState.REMOTE_LOCKED
+    val isLocked = device.isLocked || device.screenLock.isLocked
+    val until = device.lockUntilMillis ?: device.remoteLockUntilMillis
+    fun hm(t: Long) = java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(t))
+    // Bedtime and limit reasons already say when they end; only a parent's timed lock needs the time added.
+    val untilText = if (device.lockState == DeviceLockState.REMOTE_LOCKED || device.lockState == DeviceLockState.ACTIVE_UNLOCKED) {
+        until?.let { " · until ${hm(it)}" } ?: ""
+    } else ""
+    val pausedUntil = device.overrideUntilMillis?.takeIf { it > System.currentTimeMillis() }
+    val lockTitle = when (device.lockState) {
+        DeviceLockState.BEDTIME_LOCKED -> "Bedtime lock is on"
+        DeviceLockState.LIMIT_REACHED -> "Daily limit reached"
+        DeviceLockState.REMOTE_LOCKED -> "Phone locked by you"
+        else -> if (device.screenLock.isLocked) "Lock sent · waiting for the phone" else "Phone locked"
+    }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -719,13 +940,17 @@ fun RemoteSwitchOffHeroCard(
                     Spacer(modifier = Modifier.width(10.dp))
                     Column {
                         Text(
-                            text = if (isLocked) "Device Switched Off & Locked" else "Remote Screen Switch-Off",
+                            text = if (isLocked) lockTitle else "Lock ${device.childName}'s phone",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = if (isLocked) Color(0xFF991B1B) else MaterialTheme.colorScheme.onPrimaryContainer
                         )
                         Text(
-                            text = if (isLocked) "Locked for: “${device.lockReason ?: "Parental Lock"}”" else "Turn off screen & pause phone instantly",
+                            text = when {
+                                isLocked -> (device.lockReason ?: device.screenLock.lockReason ?: "Locked") + untilText
+                                pausedUntil != null -> "Bedtime and the daily limit are paused until ${hm(pausedUntil)}"
+                                else -> "Switch the screen off and lock it now, or set a timed lock"
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = if (isLocked) Color(0xFFB91C1C) else MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
                         )
@@ -751,30 +976,47 @@ fun RemoteSwitchOffHeroCard(
                     Icon(Icons.Default.LockOpen, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Unlock & Resume ${device.childName}'s Phone",
+                        text = if (device.lockState == DeviceLockState.BEDTIME_LOCKED || device.lockState == DeviceLockState.LIMIT_REACHED) "Unlock for 1 hour" else "Unlock ${device.childName}'s phone",
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp
                     )
                 }
             } else {
-                Button(
-                    onClick = onOpenSwitchOffDialog,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(50.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFFDC2626),
-                        contentColor = Color.White
-                    ),
-                    shape = RoundedCornerShape(14.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(Icons.Default.PowerSettingsNew, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Switch Off Screen & Lock Remotely",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp
-                    )
+                    Button(
+                        onClick = onOpenSwitchOffDialog,
+                        modifier = Modifier
+                            .weight(1.3f)
+                            .height(50.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFDC2626),
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Icon(Icons.Default.PowerSettingsNew, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Switch Off Now",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
+                    }
+
+                    OutlinedButton(
+                        onClick = onOpenTimedLockDialog,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(50.dp),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Icon(Icons.Default.HourglassTop, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Timed Lock", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    }
                 }
             }
 
@@ -792,7 +1034,7 @@ fun RemoteSwitchOffHeroCard(
                 ) {
                     Icon(Icons.Default.MoreTime, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("+15m Bonus", style = MaterialTheme.typography.labelMedium)
+                    Text("+15 min today", style = MaterialTheme.typography.labelMedium)
                 }
 
                 OutlinedButton(
@@ -802,7 +1044,7 @@ fun RemoteSwitchOffHeroCard(
                 ) {
                     Icon(Icons.Default.MoreTime, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("+30m Bonus", style = MaterialTheme.typography.labelMedium)
+                    Text("+30 min today", style = MaterialTheme.typography.labelMedium)
                 }
             }
         }
@@ -837,10 +1079,10 @@ fun DailyLimitManagementSection(
                     Text("Today's Screen Time", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 }
                 Text(
-                    text = "${device.usedScreenTimeMinutes}m / ${device.dailyLimitMinutes}m",
+                    text = if (device.effectiveLimitMinutes > 0) "${device.usedScreenTimeMinutes}m / ${device.effectiveLimitMinutes}m" else "${device.usedScreenTimeMinutes}m · no limit",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
-                    color = if (device.remainingMinutes == 0) Color(0xFFDC2626) else MaterialTheme.colorScheme.primary
+                    color = if (device.effectiveLimitMinutes > 0 && device.remainingMinutes == 0) Color(0xFFDC2626) else MaterialTheme.colorScheme.primary
                 )
             }
 
@@ -876,7 +1118,11 @@ fun DailyLimitManagementSection(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = "${device.remainingMinutes} mins remaining today",
+                    text = when {
+                        device.effectiveLimitMinutes <= 0 -> "No daily limit set"
+                        device.bonusMinutesToday > 0 -> "${device.remainingMinutes} min left today (includes ${device.bonusMinutesToday} min bonus)"
+                        else -> "${device.remainingMinutes} min left today"
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -890,14 +1136,19 @@ fun DailyLimitManagementSection(
             Spacer(modifier = Modifier.height(18.dp))
 
             // Slider
+            // Drag locally and save once on release; each save is sent to the child's phone.
+            var draft by remember(device.dailyLimitMinutes) { mutableStateOf(device.dailyLimitMinutes.coerceIn(15, 360).toFloat()) }
+            val draftMinutes = (draft / 15f).toInt() * 15
             Text(
-                text = "Adjust Daily Limit: ${device.dailyLimitMinutes} Minutes (${device.dailyLimitMinutes / 60}h ${device.dailyLimitMinutes % 60}m)",
+                text = if (device.dailyLimitMinutes <= 0) "Daily limit: none · drag to set one"
+                else "Daily limit: ${com.tele.k_guard.screentime.LockEvaluator.formatMinutes(draftMinutes)}",
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.Bold
             )
             Slider(
-                value = device.dailyLimitMinutes.toFloat(),
-                onValueChange = { onUpdateDailyLimit(it.toInt()) },
+                value = draft,
+                onValueChange = { draft = it },
+                onValueChangeFinished = { if (draftMinutes != device.dailyLimitMinutes) onUpdateDailyLimit(draftMinutes) },
                 valueRange = 15f..360f,
                 steps = 22
             )
@@ -907,7 +1158,7 @@ fun DailyLimitManagementSection(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                listOf(45, 60, 90, 120, 150, 180).forEach { mins ->
+                listOf(0, 60, 90, 120, 150, 180).forEach { mins ->
                     val isSelected = device.dailyLimitMinutes == mins
                     Surface(
                         shape = RoundedCornerShape(8.dp),
@@ -917,7 +1168,7 @@ fun DailyLimitManagementSection(
                             .padding(2.dp)
                     ) {
                         Text(
-                            text = "${mins}m",
+                            text = if (mins == 0) "None" else "${mins}m",
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
@@ -1076,8 +1327,19 @@ fun AppUsageBreakdownSection(device: ChildDevice) {
 fun SchedulesSection(
     device: ChildDevice,
     onToggleBedtime: (Boolean) -> Unit,
-    onToggleSchoolMode: (Boolean) -> Unit
+    onToggleSchoolMode: (Boolean) -> Unit,
+    onChangeBedtime: (String, String) -> Unit = { _, _ -> },
+    onChangeSchoolHours: (String, String) -> Unit = { _, _ -> }
 ) {
+    var editing by remember { mutableStateOf<String?>(null) } // "bedtime" | "school"
+    when (editing) {
+        "bedtime" -> com.tele.k_guard.ui.components.TimeRangeDialog("Bedtime", device.bedtimeStart, device.bedtimeEnd, { editing = null }) { s, e ->
+            editing = null; onChangeBedtime(s, e)
+        }
+        "school" -> com.tele.k_guard.ui.components.TimeRangeDialog("School hours", device.schoolStart, device.schoolEnd, { editing = null }) { s, e ->
+            editing = null; onChangeSchoolHours(s, e)
+        }
+    }
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         // Bedtime Card
         Card(
@@ -1119,10 +1381,11 @@ fun SchedulesSection(
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Automatically powers off the screen and locks all apps overnight so your child can get healthy sleep.",
+                    text = "Every night the phone switches its screen off and stays locked until the end time. ${device.childName.ifBlank { "Your child" }} gets a warning 10 minutes before. Emergency calls stay available.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                TextButton(onClick = { editing = "bedtime" }) { Text("Change times") }
             }
         }
 
@@ -1166,10 +1429,11 @@ fun SchedulesSection(
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Restricts gaming, video and social media apps during class hours while keeping approved educational apps available.",
+                    text = "Monday to Friday, games, video, music and social apps are paused during these hours. Calls, messages, maps and learning apps keep working.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                TextButton(onClick = { editing = "school" }) { Text("Change times") }
             }
         }
     }

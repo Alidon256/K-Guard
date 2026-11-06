@@ -23,14 +23,20 @@ data class AppAccessInfo(
     val minAgeRating: Int = 3,
     val safetyScore: Int = 85,
     val approvalStatus: AppApprovalStatus = AppApprovalStatus.PENDING_REVIEW,
-    val dailyLimitMinutes: Int = 30,
+    /** Per-app daily limit on the child's phone; 0 means no per-app limit. */
+    val dailyLimitMinutes: Int = 0,
     val safetyReason: String = "",
     val childId: String = "",
     val childName: String = "",
     val childLinkedUid: String? = null,
     val requestedAt: Timestamp? = null,
     val reviewedAt: Timestamp? = null,
-    val reviewedBy: String? = null
+    val reviewedBy: String? = null,
+    /** False once the child's phone reports the app was uninstalled. */
+    val installed: Boolean = true,
+    val uninstalledAt: Timestamp? = null,
+    /** "existing" (on the phone at setup), "device_install" (installed by the child) or "parent_added". */
+    val source: String? = null
 ) {
     val isPending: Boolean
         get() = approvalStatus == AppApprovalStatus.PENDING_REVIEW

@@ -22,4 +22,9 @@ sealed class Screen(val route: String) {
         fun create(appId: String) = "app_detail?appId=$appId"
     }
     object Profile : Screen("profile")
+    object ChildPairingCode : Screen("child_pairing_code")
+    object ParentAssistant : Screen("parent_assistant")
+    object BlockedApp : Screen("blocked_app?appName={appName}") {
+        fun create(appName: String) = "blocked_app?appName=$appName"
+    }
 }

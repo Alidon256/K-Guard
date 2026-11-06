@@ -1,9 +1,5 @@
 package com.tele.k_guard.ui.screens
 
-import android.app.Activity
-import android.net.VpnService
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -27,6 +23,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -38,6 +36,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,32 +56,42 @@ import com.tele.k_guard.ui.components.KGuardTopAppBar
 import com.tele.k_guard.ui.theme.KGuardTheme
 import com.tele.k_guard.viewmodel.SessionViewModel
 import com.tele.k_guard.vpn.DomainFilter
-import com.tele.k_guard.vpn.KGuardVpnService
+import com.tele.k_guard.vpn.ParentWebEditor
 import com.tele.k_guard.vpn.Source
-import com.tele.k_guard.vpn.VpnConfigStore
 import com.tele.k_guard.vpn.VpnPolicy
-import com.tele.k_guard.vpn.VpnState
 import java.text.DateFormat
 import java.util.Date
 
 private val GREEN = Color(0xFF2E7D32)
 private val RED = Color(0xFFC62828)
 
+/**
+ * Parent's phone. Every setting here is saved to Firestore for the selected child and applied by that
+ * child's phone (see [com.tele.k_guard.vpn.ChildWebProtectionSync]); nothing filters on the parent's phone.
+ */
 @Composable
 fun WebProtectionScreen(session: SessionViewModel, onNavigateBack: () -> Unit) {
-    val context = LocalContext.current
-    val store = remember { VpnConfigStore(context) }
     val child by session.selectedChild.collectAsState()
+    val familyId by session.familyId.collectAsState()
     val events by session.events.collectAsState()
+    val scope = rememberCoroutineScope()
+    val snackbar = remember { SnackbarHostState() }
+    var error by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(error) { error?.let { snackbar.showSnackbar(it); error = null } }
 
-    // Keep the service's copy of the child's age group and rules current.
-    LaunchedEffect(child) { child?.let { store.applyChild(it) } }
+    val fid = familyId
+    val c = child
+    val editor = remember(fid, c?.id) {
+        if (fid == null || c == null) null
+        else ParentWebEditor(scope, fid, c.id) { e -> error = e.localizedMessage ?: "Could not save. Check the connection and try again." }
+    }
 
     WebProtectionContent(
         session = session,
-        store = store,
+        editor = editor,
         child = child,
         events = events,
+        snackbar = snackbar,
         onNavigateBack = onNavigateBack
     )
 }
@@ -90,16 +99,43 @@ fun WebProtectionScreen(session: SessionViewModel, onNavigateBack: () -> Unit) {
 @Composable
 fun WebProtectionContent(
     session: SessionViewModel,
-    store: VpnConfigStore,
+    editor: ParentWebEditor?,
     child: ChildProfile?,
     events: List<SafetyEvent>,
+    snackbar: SnackbarHostState,
     onNavigateBack: () -> Unit
 ) {
     var tab by remember { mutableIntStateOf(runCatching { com.tele.k_guard.DebugPreview.webTab }.getOrDefault(0)) }
     val openWeb = events.count { it.contentType == "web" && it.isOpen }
 
-    Scaffold(topBar = { KGuardTopAppBar("Web Protection", canNavigateBack = true, onNavigateBack = onNavigateBack) }) { padding ->
+    Scaffold(
+        topBar = { KGuardTopAppBar("Web Protection", canNavigateBack = true, onNavigateBack = onNavigateBack) },
+        snackbarHost = { SnackbarHost(snackbar) }
+    ) { padding ->
+        if (editor == null || child == null) {
+            Column(Modifier.fillMaxSize().padding(padding).padding(24.dp), verticalArrangement = Arrangement.Center) {
+                Text("Add a child profile and pair the child's phone to set up web protection.", style = MaterialTheme.typography.bodyLarge)
+            }
+            return@Scaffold
+        }
         Column(Modifier.fillMaxSize().padding(padding)) {
+            // Which child's phone these settings are for.
+            val allChildren by session.children.collectAsState()
+            if (allChildren.size > 1) {
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    allChildren.forEach { c ->
+                        FilterChip(
+                            selected = c.id == child.id,
+                            onClick = { session.selectChild(c.id) },
+                            label = { Text(c.name) },
+                            leadingIcon = { com.tele.k_guard.ui.components.ChildAvatar(c.name, c.photoUrl, 22.dp) }
+                        )
+                    }
+                }
+            }
             TabRow(selectedTabIndex = tab) {
                 Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Status") })
                 Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Categories") })
@@ -111,9 +147,9 @@ fun WebProtectionContent(
                 })
             }
             when (tab) {
-                0 -> StatusTab(session, store)
-                1 -> CategoriesTab(session, store)
-                else -> ActivityTab(session, store)
+                0 -> StatusTab(child, editor)
+                1 -> CategoriesTab(session, editor)
+                else -> ActivityTab(session, editor)
             }
         }
     }
@@ -121,52 +157,56 @@ fun WebProtectionContent(
 
 // ---------------------------------------------------------------- Status: on/off + "Check a site"
 @Composable
-private fun StatusTab(session: SessionViewModel, store: VpnConfigStore) {
+private fun StatusTab(child: ChildProfile, editor: ParentWebEditor) {
     val context = LocalContext.current
-    val child by session.selectedChild.collectAsState()
-    val running by VpnState.running.collectAsState()
-    val blocked by VpnState.blockedCount.collectAsState()
+    val remote by editor.state.collectAsState()
+    val saving by editor.saving.collectAsState()
     val filter = remember { runCatching { DomainFilter.load(context) }.getOrNull() }
-
-    val consent = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (result.resultCode == Activity.RESULT_OK) KGuardVpnService.start(context)
-    }
-    fun turnOn() {
-        child?.let { store.applyChild(it) }
-        val prepare = VpnService.prepare(context)
-        if (prepare != null) consent.launch(prepare) else KGuardVpnService.start(context)
-    }
+    val wanted = remote.settings.enabled
+    val device = remote.device
+    val paired = child.linkedUid != null
 
     var site by remember { mutableStateOf("") }
     var checked by remember { mutableStateOf<Pair<String, String>?>(null) }
     var siteBlocked by remember { mutableStateOf(false) }
 
+    val (headline, detail, tone) = when {
+        !remote.loaded -> Triple("Checking…", "Loading ${child.name}'s settings.", null)
+        !wanted -> Triple("Protection is off", "Turn it on to filter websites on ${child.name}'s phone.", null)
+        !paired -> Triple("Waiting for pairing", "Protection will start as soon as ${child.name}'s phone is paired.", RED)
+        device.running -> Triple("Protection is on", "Filtering on ${child.name}'s phone (${child.age.ageRange}) with this profile's age group and rules.", GREEN)
+        device.needsConsent -> Triple("Needs one tap on ${child.name}'s phone", "Android asks the person holding the phone to allow K-Guard once. A notification is waiting there: tap it, then OK.", RED)
+        device.turnedOffOnDevice -> Triple("Turned off on ${child.name}'s phone", "Protection was switched off on the phone. K-Guard is turning it back on.", RED)
+        else -> Triple("Starting on ${child.name}'s phone", "The setting is saved. It applies as soon as the phone is online.", null)
+    }
+
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(
-                containerColor = if (running) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+                containerColor = if (wanted && device.running) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
             )
         ) {
             Column(Modifier.padding(16.dp)) {
-                Text(if (running) "Protection is on" else "Protection is off", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Text(
-                    child?.let { "Protecting ${it.name} (${it.age.ageRange}) with this profile's age group and category rules." }
-                        ?: "Add a child profile first, so K-Guard knows which rules to apply.",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-                Spacer(Modifier.height(12.dp))
-                if (running) OutlinedButton(onClick = { KGuardVpnService.stop(context) }) { Text("Turn off") }
-                else Button(onClick = { turnOn() }, enabled = child != null) { Text("Turn on web protection") }
-                if (running) Text("$blocked site(s) blocked this session", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
-                if (running && child?.age != AgeProfile.ADULTS_18_PLUS) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                        Text(headline, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = tone ?: Color.Unspecified)
+                        Text(detail, style = MaterialTheme.typography.bodyMedium)
+                    }
+                    Switch(checked = wanted, enabled = remote.loaded && !saving, onCheckedChange = { editor.setEnabled(it) })
+                }
+                device.updatedAtMillis?.let {
+                    Text(
+                        "Last report from the phone: " + DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(it)),
+                        style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+                if (wanted && device.running && child.age != AgeProfile.ADULTS_18_PLUS) {
                     Text("Safe search and YouTube Restricted Mode are on.", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 4.dp))
                 }
             }
         }
-
-        Spacer(Modifier.height(16.dp))
-        QueryStatsCard()
 
         Spacer(Modifier.height(20.dp))
         Text("Check a site", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -174,11 +214,11 @@ private fun StatusTab(session: SessionViewModel, store: VpnConfigStore) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(site, { site = it; checked = null }, label = { Text("example.com") }, singleLine = true, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp))
             Button(
-                enabled = site.isNotBlank() && child != null && filter != null,
+                enabled = site.isNotBlank() && filter != null,
                 onClick = {
-                    val c = child ?: return@Button
                     val f = filter ?: return@Button
-                    val policy = store.load().policy.copy(ageProfile = c.age, rules = c.categoryRules)
+                    val s = remote.settings
+                    val policy = VpnPolicy(child.age, child.categoryRules, s.customBlock, s.customAllow, s.educationalAllow)
                     val domain = site.trim().removePrefix("https://").removePrefix("http://").substringBefore('/')
                     val v = f.evaluate(domain, policy)
                     siteBlocked = v.blocked
@@ -201,15 +241,17 @@ private fun StatusTab(session: SessionViewModel, store: VpnConfigStore) {
         Spacer(Modifier.height(20.dp)); HorizontalDivider(); Spacer(Modifier.height(12.dp))
         Text("How it works", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Text(
-            "K-Guard sets up a private connection on this phone that checks website names only. Harmful sites are blocked in every browser and app. " +
-                "Nothing is sent to a K-Guard server, and K-Guard cannot see pages, messages or photos. Use the Text and Image checkers for content.",
+            "Your settings are saved to your family account and applied on ${child.name}'s phone within seconds while it is online. " +
+                "That phone sets up a private connection that checks website names only, so harmful sites are blocked in every browser and app. " +
+                "K-Guard cannot see pages, messages or photos. Use the Text and Image checkers for content.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(8.dp))
         Text("Good to know", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
         Text(
-            "• It may not stop apps or browsers that use their own encrypted DNS (for example \"Secure DNS\" in Chrome). Turn that off for best results.\n" +
-                "• Android shows a permanent notification while it runs, and it can be switched off in Settings.\n" +
+            "• When the phone is offline it keeps enforcing the last settings it received.\n" +
+                "• It may not stop apps or browsers that use their own encrypted DNS (for example \"Secure DNS\" in Chrome). Turn that off on the child's phone for best results.\n" +
+                "• If the protection is switched off in Android's settings on the child's phone, K-Guard turns it back on and you get a notification.\n" +
                 "• The built-in site list is a starting set. Add your own blocks and allows under Categories.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -218,7 +260,7 @@ private fun StatusTab(session: SessionViewModel, store: VpnConfigStore) {
 
 // ---------------------------------------------------------------- Categories: age-aware protection
 @Composable
-private fun CategoriesTab(session: SessionViewModel, store: VpnConfigStore) {
+private fun CategoriesTab(session: SessionViewModel, store: ParentWebEditor) {
     val context = LocalContext.current
     val child by session.selectedChild.collectAsState()
     val customBlock by store.customBlock.collectAsState()
@@ -300,7 +342,7 @@ private fun CategoriesTab(session: SessionViewModel, store: VpnConfigStore) {
             blockErr = !store.addCustomBlock(blockInput); if (!blockErr) blockInput = ""
         }, onRemove = { store.removeCustomBlock(it) })
         Spacer(Modifier.height(16.dp))
-        Text("Changes apply immediately while protection is on.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("Changes reach ${c.name}'s phone within seconds while it is online.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -312,7 +354,18 @@ private fun DomainEditor(
     Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
     Text(hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 4.dp)) {
-        OutlinedTextField(value, onChange, label = { Text("example.com") }, singleLine = true, isError = error, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp))
+        OutlinedTextField(
+            value, onChange, label = { Text("example.com") }, singleLine = true, isError = error,
+            modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp),
+            // A web-address keyboard with no auto-correct, so "example.com" is not turned into "example. com".
+            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri,
+                autoCorrectEnabled = false,
+                capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.None,
+                imeAction = androidx.compose.ui.text.input.ImeAction.Done
+            ),
+            keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = { onAdd() })
+        )
         Button(onClick = onAdd, modifier = Modifier.padding(top = 8.dp)) { Text("Add") }
     }
     if (error) Text("Enter a website like example.com", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
@@ -325,9 +378,8 @@ private fun DomainEditor(
 
 // ---------------------------------------------------------------- Activity: alerts, explanations, review
 @Composable
-private fun ActivityTab(session: SessionViewModel, store: VpnConfigStore) {
+private fun ActivityTab(session: SessionViewModel, store: ParentWebEditor) {
     val events by session.events.collectAsState()
-    val recent by VpnState.recent.collectAsState()
     val webEvents = events.filter { it.contentType == "web" }
     var onlyOpen by remember { mutableStateOf(true) }
     val shown = webEvents.filter { !onlyOpen || it.isOpen }
@@ -346,27 +398,11 @@ private fun ActivityTab(session: SessionViewModel, store: VpnConfigStore) {
             Text(if (onlyOpen) "No web alerts need review." else "No web alerts yet.", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 12.dp))
         }
         shown.forEach { ev -> WebAlertCard(ev, session, store) }
-
-        if (recent.isNotEmpty()) {
-            Spacer(Modifier.height(16.dp)); HorizontalDivider(); Spacer(Modifier.height(12.dp))
-            Text("Blocked on this phone (this session)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text("Kept in memory only and cleared when the app closes.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            recent.forEach { e ->
-                Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(e.domain, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                        Text(DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(e.time)), style = MaterialTheme.typography.labelSmall)
-                    }
-                    Text(e.explanation, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    OutlinedButton(onClick = { store.addCustomAllow(e.domain) }, modifier = Modifier.padding(top = 4.dp)) { Text("Allow this site") }
-                }
-            }
-        }
     }
 }
 
 @Composable
-private fun WebAlertCard(ev: SafetyEvent, session: SessionViewModel, store: VpnConfigStore) {
+private fun WebAlertCard(ev: SafetyEvent, session: SessionViewModel, store: ParentWebEditor) {
     Card(Modifier.fillMaxWidth().padding(vertical = 4.dp), shape = RoundedCornerShape(12.dp)) {
         Column(Modifier.padding(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {

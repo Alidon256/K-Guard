@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.asStateFlow
 data class VpnConfig(
     val enabled: Boolean = false,
     val childId: String? = null,
+    /** Set on a paired child's phone, where the parent's settings arrive from Firestore. */
+    val familyId: String? = null,
     val policy: VpnPolicy = VpnPolicy(AgeProfile.KIDS_3_7) // strictest until a child is chosen
 )
 
@@ -20,6 +22,7 @@ class VpnConfigStore(context: Context) {
     fun load(): VpnConfig = VpnConfig(
         enabled = prefs.getBoolean("enabled", false),
         childId = prefs.getString("childId", null),
+        familyId = prefs.getString("familyId", null),
         policy = VpnPolicy(
             ageProfile = AgeProfile.fromId(prefs.getString("age", AgeProfile.KIDS_3_7.id)),
             rules = (prefs.getString("rules", "") ?: "").split(',').mapNotNull {
@@ -42,6 +45,25 @@ class VpnConfigStore(context: Context) {
     }
 
     fun setEnabled(enabled: Boolean) { prefs.edit().putBoolean("enabled", enabled).apply() }
+
+    /**
+     * Child's phone: replaces the whole policy with what the parent set. The VPN service reads this store on
+     * every DNS lookup, so the change applies to the next lookup without restarting the tunnel.
+     */
+    fun applyRemote(familyId: String, childId: String, ageProfile: String, rules: Map<String, String>, settings: WebSettings) {
+        prefs.edit()
+            .putString("familyId", familyId)
+            .putString("childId", childId)
+            .putString("age", ageProfile)
+            .putString("rules", rules.entries.joinToString(",") { "${it.key}=${it.value}" })
+            .putStringSet("customBlock", settings.customBlock)
+            .putStringSet("customAllow", settings.customAllow)
+            .putBoolean("edu", settings.educationalAllow)
+            .apply()
+        _customBlock.value = settings.customBlock
+        _customAllow.value = settings.customAllow
+        _educational.value = settings.educationalAllow
+    }
 
     fun addCustomBlock(domain: String): Boolean {
         val d = cleanDomain(domain) ?: return false
@@ -72,11 +94,6 @@ class VpnConfigStore(context: Context) {
         _educational.value = on
     }
 
-    private fun cleanDomain(raw: String): String? {
-        val d = DomainFilter.normalise(raw.removePrefix("https://").removePrefix("http://").removePrefix("www.").substringBefore('/'))
-        return d.takeIf { DOMAIN.matches(it) }
-    }
-
     fun removeCustomBlock(domain: String) {
         val next = load().policy.customBlock - domain
         prefs.edit().putStringSet("customBlock", next).apply()
@@ -90,8 +107,16 @@ class VpnConfigStore(context: Context) {
     private val _educational = MutableStateFlow(load().policy.educationalAllow)
     val educationalAllow: StateFlow<Boolean> = _educational.asStateFlow()
 
-    private companion object {
-        val DOMAIN = Regex("^([a-z0-9]([a-z0-9-]*[a-z0-9])?\\.)+[a-z]{2,}$")
+    companion object {
+        private val DOMAIN = Regex("^([a-z0-9]([a-z0-9-]*[a-z0-9])?\\.)+[a-z]{2,}$")
+
+        /** Turns "https://www.Example.com/page" into "example.com"; null if it is not a website name. */
+        fun cleanDomain(raw: String): String? {
+            // Keyboards often insert spaces after dots ("example. com"); web addresses never contain spaces.
+            val compact = raw.filterNot { it.isWhitespace() }.lowercase()
+            val d = DomainFilter.normalise(compact.removePrefix("https://").removePrefix("http://").removePrefix("www.").substringBefore('/'))
+            return d.takeIf { DOMAIN.matches(it) }
+        }
     }
 }
 

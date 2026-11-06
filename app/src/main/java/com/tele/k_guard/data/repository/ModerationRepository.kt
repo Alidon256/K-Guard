@@ -14,6 +14,7 @@ import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.util.UUID
 
+
 /**
  * Sends content to the `moderateContent` Cloud Function. The server applies the child's age profile and
  * category rules, records the event and notifies parents.
@@ -25,8 +26,10 @@ class ModerationRepository(
     private val storage: FirebaseStorage = FirebaseStorage.getInstance()
 ) {
 
-    suspend fun moderateText(text: String, childId: String): Result<ModerationResponse> =
-        if (com.tele.k_guard.DebugPreview.demo) Result.success(demoText(text)) else call(mapOf("type" to "text", "text" to text, "childId" to childId))
+    suspend fun moderateText(text: String, childId: String): Result<ModerationResponse> = withContext(Dispatchers.IO) {
+        if (com.tele.k_guard.DebugPreview.demo) return@withContext Result.success(demoText(text))
+        call(mapOf("type" to "text", "text" to text, "childId" to childId))
+    }
 
     suspend fun moderateImage(context: Context, uri: Uri, childId: String): Result<ModerationResponse> =
         withContext(Dispatchers.IO) {
@@ -57,7 +60,6 @@ class ModerationRepository(
         Result.success(parse(res.data as Map<String, Any?>))
     } catch (e: FirebaseFunctionsException) {
         when (e.code) {
-            // The caller can fix these, so surface them instead of hiding behind REVIEW.
             FirebaseFunctionsException.Code.INVALID_ARGUMENT,
             FirebaseFunctionsException.Code.UNAUTHENTICATED,
             FirebaseFunctionsException.Code.PERMISSION_DENIED,

@@ -34,10 +34,11 @@ class KGuardMessagingService : FirebaseMessagingService() {
         val title = message.notification?.title ?: message.data["title"] ?: "K-Guard alert"
         val body = message.notification?.body ?: message.data["body"] ?: return
         val type = message.data["type"]
-        val destinationRoute = if (type == "app_approval" || type == "app_approval_response") {
-            "app_management"
-        } else {
-            "review_queue"
+        val destinationRoute = when (type) {
+            "app_approval", "app_approval_response" -> "app_management"
+            "device_protection", "device_silent", "app_activity" -> "screen_time"
+            "web_protection_status" -> "web_protection"
+            else -> "review_queue"
         }
         showAlert(this, title, body, destinationRoute)
     }

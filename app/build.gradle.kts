@@ -1,3 +1,11 @@
+import java.util.Properties
+
+// AI Companion's self-hosted model (see AiConfig). Set these in local.properties, which is not committed.
+val localProps = Properties().apply {
+    rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
+}
+fun localProp(name: String): String = (localProps.getProperty(name) ?: "").replace("\\", "\\\\").replace("\"", "\\\"")
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -17,6 +25,10 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        buildConfigField("String", "KGUARD_AI_URL", "\"${localProp("kguard.ai.url")}\"")
+        buildConfigField("String", "KGUARD_AI_MODEL", "\"${localProp("kguard.ai.model")}\"")
+        buildConfigField("String", "KGUARD_AI_KEY", "\"${localProp("kguard.ai.key")}\"")
     }
 
     buildTypes {
@@ -33,6 +45,10 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
+    }
+    testOptions {
+        unitTests.isReturnDefaultValues = true
     }
 }
 
