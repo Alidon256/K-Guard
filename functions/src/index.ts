@@ -472,8 +472,74 @@ export const onAppApprovalWritten = onDocumentWritten("families/{familyId}/apps/
   await event.data?.after?.ref.update({ notified: res.successCount > 0 });
 });
 
-function sanitiseRules(raw: unknown): Partial<Record<Category, Rule>> {
-  const out: Partial<Record<Category, Rule>> = {};
+/**
+ * Remote commands are written by the parent app to `families/{familyId}/commands/{commandId}`.
+ * This trigger is the pipe that actually delivers them to the child device: it forwards every
+ * new command as a data-only FCM push to the child's linked device, keeping the child app's
+ * existing `remote_lock` contract intact.
+ */
+export const onCommandCreated = onDocumentCreated("families/{familyId}/commands/{commandId}", async (event) => {
+  const cmd = event.data?.data();
+  const { familyId, commandId } = event.params;
+  if (!cmd) return;
+
+  const childId: string = cmd.childId ?? "";
+  if (!childId) return;
+
+  const childSnap = await db.doc(`families/${familyId}/children/${childId}`).get();
+  const linkedUid = childSnap.data()?.linkedUid as string | undefined;
+  if (!linkedUid) {
+    // Unpaired child: nothing to push to. The command stays "Sent" and the parent UI can
+    // surface "device not linked" — never fake a delivery.
+    await event.data?.ref.update({ deliveryError: "child not linked" });
+    return;
+  }
+
+  const childUser = await userDoc(linkedUid);
+  const tokens: string[] = childUser.fcmTokens ?? [];
+  if (tokens.length === 0) {
+    await event.data?.ref.update({ deliveryError: "child device has no FCM token" });
+    return;
+  }
+
+  const action: string = cmd.action ?? "";
+  const isLock = action === "switch_off_lock";
+
+  const res = await getMessaging().sendEachForMulticast({
+    tokens,
+    // Data-only (no notification payload) so onMessageReceived always fires and the child
+    // app can execute silently — lock screens and alarms must not be user-gated.
+    data: {
+      familyId,
+      commandId,
+      childId,
+      childName: cmd.childName ?? "",
+      type: isLock ? "remote_lock" : "remote_command",
+      action,
+      description: cmd.description ?? "",
+      reason: cmd.reason ?? "",
+    },
+    android: { priority: "high" },
+  });
+
+  const dead = new Set<string>();
+  res.responses.forEach((r, i) => {
+    const code = r.error?.code;
+    if (code === "messaging/registration-token-not-registered" || code === "messaging/invalid-registration-token") {
+      dead.add(tokens[i]);
+    }
+  });
+  if (dead.size) {
+    await db.doc(`users/${linkedUid}`).update({ fcmTokens: FieldValue.arrayRemove(...dead) });
+  }
+
+  await event.data?.ref.update({
+    pushedAt: FieldValue.serverTimestamp(),
+    deliveryError: res.successCount > 0 ? "" : "FCM delivery failed",
+  });
+});
+
+function sanitiseRules(raw: unknown): Partial<Record<Category, Rule>> {  const out: Partial<Record<Category, Rule>> = {};
   if (!raw || typeof raw !== "object") return out;
   for (const c of CATEGORIES) {
     const v = (raw as any)[c];

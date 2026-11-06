@@ -1,12 +1,15 @@
 package com.tele.k_guard.ui.screens
 
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.core.content.ContextCompat
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -67,6 +70,7 @@ import kotlinx.coroutines.launch
 import com.tele.k_guard.ui.components.KGPrimaryButton
 import com.tele.k_guard.ui.components.KGTextLink
 import com.tele.k_guard.ui.components.KGuardLogo
+import com.tele.k_guard.service.KGuardMessagingService
 import com.tele.k_guard.ui.theme.KGColors
 import com.tele.k_guard.ui.theme.KGShapes
 
@@ -88,9 +92,30 @@ private val LockBorder = Color.White.copy(alpha = 0.25f)
 
 class DeviceLockActivity : ComponentActivity() {
 
+    /** Closes the lock screen when the parent sends the "unlock" command via FCM. */
+    private val unlockReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            finish()
+        }
+    }
+
+    override fun onDestroy() {
+        runCatching { unregisterReceiver(unlockReceiver) }
+        super.onDestroy()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // The parent's unlock command arrives as a broadcast (the FCM service cannot trust
+        // background activity starts); receiving it here is the child-side unlock path.
+        ContextCompat.registerReceiver(
+            this,
+            unlockReceiver,
+            IntentFilter(KGuardMessagingService.ACTION_UNLOCK_DEVICE),
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
 
         // Keep the lock screen up: back navigation must never finish the activity.
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {

@@ -53,6 +53,11 @@ class KGuardMessagingService : FirebaseMessagingService() {
             return
         }
 
+        if (data["type"] == "remote_command") {
+            handleRemoteCommand(this, data)
+            return
+        }
+
         val title = message.notification?.title ?: data["title"] ?: "K-Guard alert"
         val rawBody = message.notification?.body ?: data["body"] ?: return
         val familyId = data["familyId"]
@@ -138,9 +143,56 @@ class KGuardMessagingService : FirebaseMessagingService() {
         showAlert(context, "K-Guard Remote Lock", "Screen switched off by parent for $childName: $reason")
     }
 
+    /**
+     * Any other remote command from the parent. Unlock closes the lock screen; alarm rings the
+     * device. Limit/schedule commands need no local action here — the parent's Firestore write
+     * to `devices/{childId}` is the source of truth the UI reads.
+     */
+    private fun handleRemoteCommand(context: Context, data: Map<String, String>) {
+        when (data["action"]) {
+            "unlock_device" -> {
+                // Explicit broadcast to the (possibly open) lock screen; it finishes itself on receive.
+                context.sendBroadcast(
+                    Intent(ACTION_UNLOCK_DEVICE).setPackage(context.packageName)
+                )
+            }
+            "sound_alarm" -> scope.launch { runCatching { playAlarm(context) } }
+        }
+    }
+
+    /** Rings the alarm tone loudly for ~15 seconds, then releases. */
+    private suspend fun playAlarm(context: Context) {
+        val uri = android.media.RingtoneManager.getActualDefaultRingtoneUri(
+            context, android.media.RingtoneManager.TYPE_ALARM
+        ) ?: return
+        val player = android.media.MediaPlayer()
+        player.setDataSource(context, uri)
+        player.setAudioAttributes(
+            android.media.AudioAttributes.Builder()
+                .setUsage(android.media.AudioAttributes.USAGE_ALARM)
+                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
+        )
+        player.isLooping = true
+        player.prepare()
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+        val previous = am.getStreamVolume(android.media.AudioManager.STREAM_ALARM)
+        am.setStreamVolume(
+            android.media.AudioManager.STREAM_ALARM,
+            am.getStreamMaxVolume(android.media.AudioManager.STREAM_ALARM), 0
+        )
+        player.start()
+        kotlinx.coroutines.delay(15_000)
+        player.stop()
+        player.release()
+        am.setStreamVolume(android.media.AudioManager.STREAM_ALARM, previous, 0)
+    }
+
     companion object {
         private const val TAG = "KGuardMessaging"
         const val CHANNEL_ID = "safety_alerts"
+        /** Broadcast that tells [DeviceLockActivity] a parent has unlocked the device. */
+        const val ACTION_UNLOCK_DEVICE = "com.tele.k_guard.remote.UNLOCK_DEVICE"
         private val notificationId = AtomicInteger(0)
 
         fun ensureChannel(context: Context) {
