@@ -94,8 +94,9 @@ class SessionViewModel : ViewModel() {
                     _selectedChildId.value = null
                 } else {
                     // After a successful pairing, ensureFamily (already in flight or fired here)
-                    // must not overwrite the familyId the pairing code resolved to.
-                    if (!pairedDevice) {
+                    // must not overwrite the familyId the pairing code resolved to. Anonymous
+                    // identities are child devices by design — they never own a family.
+                    if (!pairedDevice && u.isAnonymous != true) {
                         runCatching { repo.ensureFamily() }
                             .onSuccess { if (!pairedDevice) _familyId.value = it }
                             .onFailure { reportError(it) }
@@ -118,6 +119,10 @@ class SessionViewModel : ViewModel() {
      * parent's 6-digit code, which binds the child profile to this device's identity.
      */
     fun pairChildDevice(code: String) = launchBusy {
+        // Flag BEFORE the anonymous sign-in fires: the auth listener would otherwise race this
+        // redemption and call ensureFamily, creating a users/{uid} doc with role "parent" —
+        // which the pairing function then (correctly) rejects.
+        pairedDevice = true
         if (repo.currentUser == null) {
             runCatching { repo.signInAnonymously() }
                 .onFailure {
@@ -128,7 +133,6 @@ class SessionViewModel : ViewModel() {
                 }
         }
         val res = repo.redeemPairingCode(code)
-        pairedDevice = true
         val fid = res["familyId"] as? String ?: error("Pairing response is missing the family id.")
         val cid = res["childId"] as? String
         _familyId.value = fid
