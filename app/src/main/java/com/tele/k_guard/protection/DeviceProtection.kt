@@ -42,6 +42,7 @@ object DeviceProtection {
     private const val WATCHDOG_INTERVAL_MS = 15L * 60 * 1000
     private const val NAG_PREFS = "protection_nag"
     private const val NAG_KEY_LAST = "last_admin_nag"
+    private const val NAG_KEY_ENGINE = "last_engine_nag"
     private const val NAG_INTERVAL_MS = 60L * 60 * 1000
 
     fun adminComponent(context: Context) =
@@ -86,8 +87,18 @@ object DeviceProtection {
         }.getOrDefault(false)
         if (!isChild) return
 
-        // Screen time engine: locks, schedules and limits stop if this service is killed.
-        if (!KGuardCompanionService.isRunning) KGuardCompanionService.startCompanionService(context)
+        // Screen time engine: locks, schedules and limits stop if this service is killed. If Android won't let
+        // the alarm restart it (Android 12+ without unrestricted battery), ask for a tap: opening K-Guard
+        // starts it, and a user action is always allowed to.
+        if (!KGuardCompanionService.isRunning && !KGuardCompanionService.startCompanionService(context)) {
+            rateLimited(context, NAG_KEY_ENGINE) {
+                KGuardMessagingService.showAlert(
+                    context,
+                    "K-Guard protection is paused",
+                    "Tap to turn screen time protection back on. Allowing K-Guard unrestricted battery use keeps it running."
+                )
+            }
+        }
 
         // VPN: if the parent left protection on but the service is not running, bring it back.
         if (VpnConfigStore(context).load().enabled && !VpnState.running.value) {
@@ -96,16 +107,23 @@ object DeviceProtection {
 
         // Uninstall protection: nag (at most hourly) until the admin is active again.
         if (!isAdminActive(context)) {
-            val prefs = context.getSharedPreferences(NAG_PREFS, Context.MODE_PRIVATE)
-            val now = System.currentTimeMillis()
-            if (now - prefs.getLong(NAG_KEY_LAST, 0L) > NAG_INTERVAL_MS) {
-                prefs.edit().putLong(NAG_KEY_LAST, now).apply()
+            rateLimited(context, NAG_KEY_LAST) {
                 KGuardMessagingService.showAlert(
                     context,
                     "K-Guard protection is weakened",
                     "Uninstall protection was turned off. Open K-Guard and turn device administrator back on so the app cannot be removed."
                 )
             }
+        }
+    }
+
+    /** Runs [show] at most once per [NAG_INTERVAL_MS] for [key]. */
+    private inline fun rateLimited(context: Context, key: String, show: () -> Unit) {
+        val prefs = context.getSharedPreferences(NAG_PREFS, Context.MODE_PRIVATE)
+        val now = System.currentTimeMillis()
+        if (now - prefs.getLong(key, 0L) > NAG_INTERVAL_MS) {
+            prefs.edit().putLong(key, now).apply()
+            show()
         }
     }
 }

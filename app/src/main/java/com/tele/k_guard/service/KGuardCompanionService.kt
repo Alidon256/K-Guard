@@ -674,15 +674,19 @@ class KGuardCompanionService : Service() {
         /**
          * Starts protection on a paired child's phone. The ids are optional: the service reads them from the
          * signed-in child's profile and stops by itself on a parent's phone.
+         *
+         * Returns false when Android refuses: from the background on Android 12+, a foreground service may only
+         * start in exempt cases (unrestricted battery, a high-priority push, boot, a user tap).
          */
-        fun startCompanionService(context: Context, familyId: String? = null, childId: String? = null) {
+        fun startCompanionService(context: Context, familyId: String? = null, childId: String? = null): Boolean {
             val intent = Intent(context, KGuardCompanionService::class.java).apply {
                 action = ACTION_START
                 putExtra(EXTRA_FAMILY_ID, familyId)
                 putExtra(EXTRA_CHILD_ID, childId)
             }
-            runCatching { ContextCompat.startForegroundService(context, intent) }
+            return runCatching { ContextCompat.startForegroundService(context, intent) }
                 .onFailure { Log.e(TAG, "Could not start screen time protection", it) }
+                .isSuccess
         }
 
         /** Asks a running service to re-check and report now (for example after a permission changes). */

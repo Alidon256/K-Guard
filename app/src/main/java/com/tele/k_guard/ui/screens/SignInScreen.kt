@@ -92,8 +92,7 @@ fun SignInScreen(
                         val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
                         val firebaseCredential = GoogleAuthProvider.getCredential(googleIdTokenCredential.idToken, null)
                         Log.d("KGuard", "UI: Google credential retrieved successfully, signing in with Firebase...")
-                        session.signInWithCredential(firebaseCredential)
-                        onParentSignedIn()
+                        session.signInWithCredential(firebaseCredential, onDone = onParentSignedIn)
                     } else {
                         Log.e("KGuard", "UI: Unexpected credential type received from Credential Manager")
                     }
@@ -103,8 +102,7 @@ fun SignInScreen(
             }
         },
         onPairWithCode = { code ->
-            session.pairChildDevice(code)
-            onChildPaired()
+            session.pairChildDevice(code, onDone = onChildPaired)
         }
     )
 }

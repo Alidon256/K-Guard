@@ -125,13 +125,16 @@ class SessionViewModel : ViewModel() {
     fun clearPairingCode() { _pairingCode.value = null }
 
     /** The single sign-in path: a Google credential from Credential Manager. */
-    fun signInWithCredential(credential: AuthCredential) = launchBusy { repo.signInWithCredential(credential) }
+    fun signInWithCredential(credential: AuthCredential, onDone: () -> Unit = {}) = launchBusy {
+        repo.signInWithCredential(credential)
+        onDone() // only after success; failures surface through [error]
+    }
 
     /**
      * Pair a child device without any account: sign in anonymously if needed, then redeem the
      * parent's 6-digit code, which binds the child profile to this device's identity.
      */
-    fun pairChildDevice(code: String) = launchBusy {
+    fun pairChildDevice(code: String, onDone: () -> Unit = {}) = launchBusy {
         // Flag BEFORE the anonymous sign-in fires: the auth listener would otherwise race this
         // redemption and call ensureFamily, creating a users/{uid} doc with role "parent" —
         // which the pairing function then (correctly) rejects.
@@ -150,6 +153,7 @@ class SessionViewModel : ViewModel() {
         val cid = res["childId"] as? String
         _familyId.value = fid
         if (cid != null) _selectedChildId.value = cid
+        onDone() // only once the code is accepted; a wrong or expired code stays on this screen
     }
 
     /** Removes this phone's push token first, so the next account on it gets no stale alerts. */
