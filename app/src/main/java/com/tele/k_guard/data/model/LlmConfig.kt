@@ -2,7 +2,7 @@ package com.tele.k_guard.data.model
 
 import com.tele.k_guard.BuildConfig
 
-/** Where the AI Companion's replies come from. */
+/** Where K-Guard Live's screen checks are sent. */
 enum class LlmProviderType(val displayName: String) {
     /** Google Gemini over its REST API, using the development keys in [GeminiKeyRotationManager]. */
     GEMINI("Google Gemini"),
@@ -12,7 +12,7 @@ enum class LlmProviderType(val displayName: String) {
 }
 
 /**
- * K-Guard Assistant settings. To use the model on the physical server, put its ngrok URL in `local.properties`
+ * AI model settings for K-Guard Live. To use the model on the physical server, put its ngrok URL in `local.properties`
  * (git-ignored) and rebuild:
  *
  * ```
@@ -23,7 +23,7 @@ enum class LlmProviderType(val displayName: String) {
  *
  * The server must accept OpenAI-style `POST /v1/chat/completions` (Ollama, vLLM, llama.cpp, LM Studio and
  * text-generation-webui all do). While no URL is set, Gemini is used. If the self-hosted model cannot be
- * reached, the companion falls back to Gemini so the child still gets an answer.
+ * reached, Live falls back to Gemini so the check still runs.
  */
 object AiConfig {
     val selfHostedUrl: String = BuildConfig.KGUARD_AI_URL.trim()

@@ -12,6 +12,8 @@ import com.tele.k_guard.vpn.ChildWebProtectionSync
  * web protection on. Android only lets the person holding the phone grant this, so it cannot be done remotely.
  * Has no UI of its own; it closes as soon as the system prompt is answered.
  */
+// A plain ComponentActivity (no Fragments), so the Fragment-version check does not apply.
+@android.annotation.SuppressLint("InvalidFragmentVersionForActivityResult")
 class VpnConsentActivity : ComponentActivity() {
 
     private val consent = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->

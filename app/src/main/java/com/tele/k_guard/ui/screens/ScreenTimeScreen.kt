@@ -28,8 +28,7 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.MoreTime
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Smartphone
@@ -75,6 +74,14 @@ import com.tele.k_guard.data.model.DeviceLockState
 import com.tele.k_guard.data.model.RemoteAction
 import com.tele.k_guard.data.model.RemoteCommand
 import com.tele.k_guard.data.model.ScreenTimeConfig
+import com.tele.k_guard.data.repository.AppActivity
+import com.tele.k_guard.data.repository.ScreenTimeRepository
+import com.tele.k_guard.ui.components.AppActivitySection
+import com.tele.k_guard.ui.components.ChildAvatar
+import com.tele.k_guard.ui.components.ChildPhoneHealthCard
+import com.tele.k_guard.ui.components.PhoneLockDialog
+import com.tele.k_guard.ui.components.TimeRangeDialog
+import com.tele.k_guard.ui.components.lastSeenText
 import com.tele.k_guard.ui.components.KGDangerButton
 import com.tele.k_guard.ui.components.KGCard
 import com.tele.k_guard.ui.components.KGEmptyState
@@ -91,6 +98,7 @@ import com.tele.k_guard.ui.theme.KGShapes
 import com.tele.k_guard.ui.theme.KGuardTheme
 import com.tele.k_guard.viewmodel.ScreenTimeViewModel
 import com.tele.k_guard.viewmodel.SessionViewModel
+import java.text.DateFormat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -101,10 +109,13 @@ fun ScreenTimeScreen(
     session: SessionViewModel? = null,
     activeAgeProfile: AgeProfile = AgeProfile.PRETEENS_8_12,
     onNavigateBack: () -> Unit,
-    onNavigateToChildren: () -> Unit = {}
+    onNavigateToChildren: () -> Unit = {},
+    onNavigateToChildProfile: (String) -> Unit = {}
 ) {
     val device by viewModel.currentDevice.collectAsState()
     val commandHistory by viewModel.commandHistory.collectAsState()
+    val appActivity by viewModel.appActivity.collectAsState()
+    val busy by viewModel.busy.collectAsState()
     val feedbackMessage by viewModel.actionFeedback.collectAsState()
 
     val childrenFromSession = session?.children?.collectAsState()?.value
@@ -112,13 +123,13 @@ fun ScreenTimeScreen(
     val familyId = session?.familyId?.collectAsState()?.value
 
     val children = childrenFromSession.orEmpty()
+    val activeChild = selectedChildFromSession ?: children.firstOrNull()
 
-    // Sync family and selected child from session
-    LaunchedEffect(familyId, selectedChildFromSession) {
-        val child = selectedChildFromSession ?: children.firstOrNull()
-        if (child != null) {
-            viewModel.setFamilyAndChild(familyId, child.id, child.name)
-        }
+    // Follow the session's child; the first time a parent opens a child, write age-based starting rules.
+    LaunchedEffect(familyId, activeChild?.id) {
+        val child = activeChild ?: return@LaunchedEffect
+        viewModel.setFamilyAndChild(familyId, child.id, child.name)
+        viewModel.initializeDefaultsIfNeeded(child.age)
     }
 
     val snackbarHostState = remember { SnackbarHostState() }
@@ -130,50 +141,65 @@ fun ScreenTimeScreen(
         }
     }
 
-    Scaffold(
-        topBar = {
-            KGuardTopAppBar(
-                title = "Child Screen Management",
-                canNavigateBack = true,
-                onNavigateBack = onNavigateBack
-            )
-        },
-        snackbarHost = { SnackbarHost(snackbarHostState) }
-    ) { innerPadding ->
-        if (children.isEmpty()) {
-            // Honest empty state: without a paired child there is no telemetry and no family
+    if (children.isEmpty()) {
+        Scaffold(
+            topBar = {
+                KGuardTopAppBar(
+                    title = "Child Screen Management",
+                    canNavigateBack = true,
+                    onNavigateBack = onNavigateBack
+                )
+            },
+            snackbarHost = { SnackbarHost(snackbarHostState) }
+        ) { innerPadding ->
+            // Honest empty state: without a child there is no telemetry and no family
             // to command, so the whole dashboard stays hidden instead of showing zeros.
             KGEmptyState(
                 icon = Icons.Default.Devices,
-                title = "No connected device",
-                description = "Pair a child's device to see live screen-time data and send remote commands.",
+                title = "No children yet",
+                description = "Add a child and pair their phone to see screen time and send remote commands.",
                 action = { KGPrimaryButton("Go to children", onClick = onNavigateToChildren) },
                 modifier = Modifier.padding(innerPadding)
             )
-        } else {
-            ScreenTimeDashboardContent(
-                device = device,
-                children = children,
-                selectedChildId = device.childId,
-                activeAgeProfile = activeAgeProfile,
-                commandHistory = commandHistory,
-                onSelectChild = { child ->
-                    viewModel.selectChild(child.id, child.name)
-                    session?.selectChild(child.id)
-                },
-                onRemoteSwitchOff = { reason -> viewModel.remoteSwitchOff(device.childId, reason) },
-                onRemoteUnlock = { viewModel.remoteUnlock(device.childId) },
-                onRemoteSoundAlarm = { viewModel.remoteSoundAlarm(device.childId) },
-                onAddBonusTime = { minutes -> viewModel.addBonusTime(device.childId, minutes) },
-                onUpdateDailyLimit = { limit -> viewModel.updateDailyLimit(device.childId, limit) },
-                onApplyAgeRecommendation = { viewModel.applyAgeRecommendation(device.childId, activeAgeProfile) },
-                onToggleBedtime = { enabled -> viewModel.updateBedtimeSchedule(device.childId, device.bedtimeStart, device.bedtimeEnd, enabled) },
-                onToggleSchoolMode = { enabled -> viewModel.updateSchoolSchedule(device.childId, device.schoolStart, device.schoolEnd, enabled) },
-                onNavigateBack = onNavigateBack,
-                snackbarHostState = snackbarHostState
-            )
         }
+        return
     }
+
+    // The dashboard brings its own Scaffold (top bar + snackbar host).
+    ScreenTimeDashboardContent(
+        device = device,
+        children = children,
+        selectedChildId = device.childId,
+        activeAgeProfile = activeAgeProfile,
+        commandHistory = commandHistory,
+        appActivity = appActivity,
+        busy = busy,
+        onSelectChild = { child ->
+            viewModel.selectChild(child.id, child.name)
+            session?.selectChild(child.id)
+        },
+        onNavigateToChildProfile = onNavigateToChildProfile,
+        onRemoteSwitchOff = { reason -> viewModel.remoteSwitchOff(device.childId, reason) },
+        onRemoteLock = { startsIn, duration ->
+            if (startsIn == 0 && duration == null) {
+                viewModel.remoteSwitchOff(device.childId, "")
+            } else {
+                val total = duration ?: 0
+                viewModel.remoteTimedLock(device.childId, total / 60, total % 60, startsIn.takeIf { it > 0 })
+            }
+        },
+        onRemoteUnlock = { viewModel.remoteUnlock(device.childId) },
+        onRemoteSoundAlarm = { viewModel.remoteSoundAlarm(device.childId) },
+        onAddBonusTime = { minutes -> viewModel.addBonusTime(device.childId, minutes) },
+        onUpdateDailyLimit = { limit -> viewModel.updateDailyLimit(device.childId, limit) },
+        onApplyAgeRecommendation = { viewModel.applyAgeRecommendation(device.childId, activeAgeProfile) },
+        onToggleBedtime = { enabled -> viewModel.updateBedtimeSchedule(device.childId, device.bedtimeStart, device.bedtimeEnd, enabled) },
+        onToggleSchoolMode = { enabled -> viewModel.updateSchoolSchedule(device.childId, device.schoolStart, device.schoolEnd, enabled) },
+        onChangeBedtime = { start, end -> viewModel.updateBedtimeSchedule(device.childId, start, end, true) },
+        onChangeSchoolHours = { start, end -> viewModel.updateSchoolSchedule(device.childId, start, end, true) },
+        onNavigateBack = onNavigateBack,
+        snackbarHostState = snackbarHostState
+    )
 }
 
 @Composable
@@ -193,9 +219,17 @@ fun ScreenTimeDashboardContent(
     onToggleBedtime: (Boolean) -> Unit,
     onToggleSchoolMode: (Boolean) -> Unit,
     onNavigateBack: () -> Unit,
-    snackbarHostState: SnackbarHostState = remember { SnackbarHostState() }
+    snackbarHostState: SnackbarHostState = remember { SnackbarHostState() },
+    appActivity: List<AppActivity> = emptyList(),
+    busy: Boolean = false,
+    onNavigateToChildProfile: (String) -> Unit = {},
+    /** Lock from the "later / for a set time" dialog: delay before it starts (0 = now), length (null = until unlocked). */
+    onRemoteLock: (startsInMinutes: Int, durationMinutes: Int?) -> Unit = { _, _ -> },
+    onChangeBedtime: (start: String, end: String) -> Unit = { _, _ -> },
+    onChangeSchoolHours: (start: String, end: String) -> Unit = { _, _ -> }
 ) {
     var showSwitchOffDialog by rememberSaveable { mutableStateOf(false) }
+    var showLockDialog by rememberSaveable { mutableStateOf(false) }
     var selectedReason by rememberSaveable { mutableStateOf("Dinner Time") }
     var customReason by rememberSaveable { mutableStateOf("") }
     var activeTab by rememberSaveable { mutableIntStateOf(0) } // 0: Controls & Status, 1: Apps & Breakdown, 2: Schedules, 3: History
@@ -216,11 +250,21 @@ fun ScreenTimeDashboardContent(
                 .padding(innerPadding)
                 .verticalScroll(rememberScrollState())
         ) {
-            // 1. Connected Children Device Switcher
+            // Saving to the child's rules; action buttons are disabled meanwhile.
+            if (busy) {
+                LinearProgressIndicator(
+                    color = KGColors.accent,
+                    trackColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            // 1. Connected Children Device Switcher (tap the selected child again for their profile)
             ChildrenDeviceSelector(
                 children = children,
                 selectedChildId = selectedChildId,
-                onSelectChild = onSelectChild
+                onSelectChild = onSelectChild,
+                onOpenProfile = { onNavigateToChildProfile(it.id) }
             )
 
             Column(modifier = Modifier.padding(16.dp)) {
@@ -228,15 +272,25 @@ fun ScreenTimeDashboardContent(
                 // 2. Connected Phone Telemetry & Live Status Card
                 ConnectedPhoneStatusCard(
                     device = device,
+                    child = children.firstOrNull { it.id == selectedChildId },
+                    busy = busy,
+                    onOpenProfile = { if (device.childId.isNotBlank()) onNavigateToChildProfile(device.childId) },
                     onSoundAlarm = onRemoteSoundAlarm
                 )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Can the child's phone actually enforce the rules?
+                ChildPhoneHealthCard(device = device)
 
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // 3. The screen's single gradient spotlight: the remote switch-off control.
                 RemoteSwitchOffHeroCard(
                     device = device,
+                    busy = busy,
                     onOpenSwitchOffDialog = { showSwitchOffDialog = true },
+                    onOpenLockDialog = { showLockDialog = true },
                     onRemoteUnlock = onRemoteUnlock,
                     onAddBonusTime = onAddBonusTime
                 )
@@ -279,6 +333,7 @@ fun ScreenTimeDashboardContent(
                         DailyLimitManagementSection(
                             device = device,
                             activeAgeProfile = activeAgeProfile,
+                            busy = busy,
                             onUpdateDailyLimit = onUpdateDailyLimit,
                             onApplyAgeRecommendation = onApplyAgeRecommendation
                         )
@@ -286,13 +341,18 @@ fun ScreenTimeDashboardContent(
                     1 -> {
                         // Live Apps Breakdown
                         AppUsageBreakdownSection(device = device)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        AppActivitySection(activity = appActivity, childName = device.childName.ifBlank { "your child" })
                     }
                     2 -> {
                         // Schedules & Focus Modes
                         SchedulesSection(
                             device = device,
                             onToggleBedtime = onToggleBedtime,
-                            onToggleSchoolMode = onToggleSchoolMode
+                            onToggleSchoolMode = onToggleSchoolMode,
+                            onChangeBedtime = onChangeBedtime,
+                            onChangeSchoolHours = onChangeSchoolHours,
+                            busy = busy
                         )
                     }
                     3 -> {
@@ -337,7 +397,7 @@ fun ScreenTimeDashboardContent(
             text = {
                 Column {
                     Text(
-                        text = "This will remotely turn off the screen, lock ${device.deviceModel}, and pause app access immediately.",
+                        text = "This turns off the screen and locks ${device.childName.ifBlank { "your child" }}'s phone until you unlock it. Emergency calls always work.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -373,6 +433,7 @@ fun ScreenTimeDashboardContent(
             confirmButton = {
                 KGDangerButton(
                     text = "Switch off now",
+                    enabled = !busy,
                     onClick = {
                         val finalReason = customReason.trim().ifEmpty { selectedReason }
                         onRemoteSwitchOff(finalReason)
@@ -385,6 +446,18 @@ fun ScreenTimeDashboardContent(
             }
         )
     }
+
+    // Lock later and/or for a set time.
+    if (showLockDialog) {
+        PhoneLockDialog(
+            childName = device.childName.ifBlank { "your child" },
+            onDismiss = { showLockDialog = false },
+            onConfirm = { startsIn, duration ->
+                onRemoteLock(startsIn, duration)
+                showLockDialog = false
+            }
+        )
+    }
 }
 
 // ---------------- UI COMPONENTS ----------------
@@ -393,7 +466,8 @@ fun ScreenTimeDashboardContent(
 fun ChildrenDeviceSelector(
     children: List<ChildProfile>,
     selectedChildId: String,
-    onSelectChild: (ChildProfile) -> Unit
+    onSelectChild: (ChildProfile) -> Unit,
+    onOpenProfile: (ChildProfile) -> Unit = {}
 ) {
     Row(
         modifier = Modifier
@@ -406,7 +480,7 @@ fun ChildrenDeviceSelector(
         children.forEach { child ->
             val isSelected = child.id == selectedChildId
             Surface(
-                onClick = { onSelectChild(child) },
+                onClick = { if (isSelected) onOpenProfile(child) else onSelectChild(child) },
                 shape = KGShapes.pill,
                 color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerLow,
                 border = if (isSelected) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
@@ -415,23 +489,7 @@ fun ChildrenDeviceSelector(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(22.dp)
-                            .clip(KGShapes.circle)
-                            .background(
-                                if (isSelected) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.2f)
-                                else MaterialTheme.colorScheme.primaryContainer
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            Icons.Default.Person,
-                            contentDescription = null,
-                            tint = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(13.dp)
-                        )
-                    }
+                    ChildAvatar(child = child, size = 22.dp)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = child.name,
@@ -450,134 +508,160 @@ fun ChildrenDeviceSelector(
 @Composable
 fun ConnectedPhoneStatusCard(
     device: ChildDevice,
+    child: ChildProfile? = null,
+    busy: Boolean = false,
+    onOpenProfile: () -> Unit = {},
     onSoundAlarm: () -> Unit
 ) {
+    val batteryKnown = device.batteryPercent >= 0
     val batteryColor = if (device.batteryPercent > 20) KGColors.success else KGColors.danger
-    val lockStateColor = when (device.lockState) {
-        DeviceLockState.REMOTE_LOCKED -> KGColors.danger
-        DeviceLockState.ACTIVE_UNLOCKED -> KGColors.success
+    val lockStateColor = when {
+        !device.hasReported -> KGColors.inkMuted
+        device.lockState == DeviceLockState.REMOTE_LOCKED -> KGColors.danger
+        device.lockState == DeviceLockState.ACTIVE_UNLOCKED -> KGColors.success
         else -> KGColors.warning
     }
+    val childName = device.childName.ifBlank { child?.name ?: "Child" }
+    val details = listOf(device.deviceModel, device.androidVersion).filter { it.isNotBlank() }.joinToString(" · ")
 
     KGCard(modifier = Modifier.fillMaxWidth()) {
-        // Header: identity + live connectivity
+        // Header: identity (tap for the child's profile) + live connectivity
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(42.dp)
-                        .clip(KGShapes.circle)
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        Icons.Default.PhoneAndroid,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(KGShapes.cardSmall)
+                    .clickable(onClick = onOpenProfile),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ChildAvatar(name = childName, photoUrl = child?.photoUrl.orEmpty(), size = 42.dp)
                 Spacer(modifier = Modifier.width(12.dp))
                 Column {
-                    Text(text = device.deviceName, style = MaterialTheme.typography.titleLarge)
                     Text(
-                        text = "${device.deviceModel} · ${device.androidVersion}",
+                        text = device.deviceName.ifBlank { "$childName's phone" },
+                        style = MaterialTheme.typography.titleLarge,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = when {
+                            !device.hasReported -> "Not connected yet"
+                            !device.isOnline -> "Last seen ${lastSeenText(device)}"
+                            else -> details.ifBlank { "Connected" }
+                        },
                         style = MaterialTheme.typography.bodySmall,
-                        color = KGColors.inkMuted
+                        color = KGColors.inkMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
-
+            Spacer(modifier = Modifier.width(8.dp))
             KGStatusTag(
-                text = if (device.isOnline) "Online" else "Offline",
+                text = when {
+                    !device.hasReported -> "Not connected"
+                    device.isOnline -> "Online"
+                    else -> "Offline"
+                },
                 color = if (device.isOnline) KGColors.success else KGColors.inkMuted
             )
         }
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        // Battery row with level bar
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    if (device.isCharging) Icons.Default.BatteryChargingFull else Icons.Default.BatteryFull,
-                    contentDescription = null,
-                    tint = batteryColor,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Battery", style = MaterialTheme.typography.bodySmall, color = KGColors.inkMuted)
-            }
+        if (!device.hasReported) {
+            // No invented telemetry: battery, network and pickups only appear once the phone reports.
             Text(
-                text = "${device.batteryPercent}%${if (device.isCharging) " · charging" else ""}",
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold
+                text = "$childName's phone hasn't reported yet. Battery, network and screen time appear here once K-Guard is set up on it.",
+                style = MaterialTheme.typography.bodySmall,
+                color = KGColors.inkMuted
             )
+        } else {
+            // Battery row with level bar
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        if (device.isCharging) Icons.Default.BatteryChargingFull else Icons.Default.BatteryFull,
+                        contentDescription = null,
+                        tint = if (batteryKnown) batteryColor else KGColors.inkMuted,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Battery", style = MaterialTheme.typography.bodySmall, color = KGColors.inkMuted)
+                }
+                Text(
+                    text = if (batteryKnown) "${device.batteryPercent}%${if (device.isCharging) " · charging" else ""}" else "Unknown",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            if (batteryKnown) {
+                Spacer(modifier = Modifier.height(6.dp))
+                LinearProgressIndicator(
+                    progress = { device.batteryPercent / 100f },
+                    color = batteryColor,
+                    trackColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .clip(KGShapes.pill)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Network + Pickups telemetry
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.Wifi,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text("Network", style = MaterialTheme.typography.labelSmall, color = KGColors.inkMuted)
+                        Text(
+                            device.networkName.ifBlank { "Unknown" },
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.Smartphone,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text("Pickups", style = MaterialTheme.typography.labelSmall, color = KGColors.inkMuted)
+                        Text(
+                            "${device.pickupsCount} today",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
         }
-        Spacer(modifier = Modifier.height(6.dp))
-        LinearProgressIndicator(
-            progress = { device.batteryPercent / 100f },
-            color = batteryColor,
-            trackColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(6.dp)
-                .clip(KGShapes.pill)
-        )
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Network + Pickups telemetry
-        Row(modifier = Modifier.fillMaxWidth()) {
-            Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    Icons.Default.Wifi,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Column {
-                    Text("Network", style = MaterialTheme.typography.labelSmall, color = KGColors.inkMuted)
-                    Text(
-                        device.networkName,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-            Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    Icons.Default.Smartphone,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Column {
-                    Text("Pickups", style = MaterialTheme.typography.labelSmall, color = KGColors.inkMuted)
-                    Text(
-                        "${device.pickupsCount} today",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // Live activity strip
+        // Live activity strip: what the phone last reported it is enforcing.
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = KGShapes.cardSmall,
@@ -595,11 +679,13 @@ fun ConnectedPhoneStatusCard(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = when (device.lockState) {
-                        DeviceLockState.REMOTE_LOCKED -> "Screen is switched off · locked remotely"
-                        DeviceLockState.ACTIVE_UNLOCKED -> "Screen is on · using ${device.currentForegroundApp ?: "apps"}"
+                    text = when {
+                        !device.hasReported -> "Waiting for the phone to connect"
+                        device.lockState == DeviceLockState.REMOTE_LOCKED -> "Screen is switched off · locked remotely"
+                        device.lockState == DeviceLockState.ACTIVE_UNLOCKED ->
+                            device.currentForegroundApp?.let { "Unlocked · using $it" } ?: "Unlocked"
                         else -> device.lockState.label
-                    },
+                    } + if (device.hasReported && !device.isOnline) " (when last seen)" else "",
                     style = MaterialTheme.typography.bodySmall,
                     fontWeight = FontWeight.Medium,
                     color = lockStateColor,
@@ -607,7 +693,7 @@ fun ConnectedPhoneStatusCard(
                 )
 
                 // Sound chime action
-                KGTextLink("Ring phone", onClick = onSoundAlarm)
+                KGTextLink("Ring phone", onClick = onSoundAlarm, enabled = !busy)
             }
         }
     }
@@ -620,11 +706,36 @@ fun ConnectedPhoneStatusCard(
 @Composable
 fun RemoteSwitchOffHeroCard(
     device: ChildDevice,
+    busy: Boolean = false,
     onOpenSwitchOffDialog: () -> Unit,
+    onOpenLockDialog: () -> Unit = {},
     onRemoteUnlock: () -> Unit,
     onAddBonusTime: (Int) -> Unit
 ) {
-    val isLocked = device.lockState == DeviceLockState.REMOTE_LOCKED
+    // Locked as reported by the phone, or a remote lock the parent set that the phone hasn't applied yet.
+    val isLocked = device.isLocked || device.screenLock.isLocked
+    val scheduleLock = device.lockState == DeviceLockState.BEDTIME_LOCKED || device.lockState == DeviceLockState.LIMIT_REACHED
+    val name = device.childName.ifBlank { "your child" }
+    fun hm(t: Long) = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(t))
+    val now = System.currentTimeMillis()
+    // Bedtime and limit reasons already say when they end; only a parent's timed lock needs the time added.
+    val untilText = if (!scheduleLock) {
+        (device.lockUntilMillis ?: device.remoteLockUntilMillis)?.takeIf { it > now }?.let { " · until ${hm(it)}" } ?: ""
+    } else ""
+    val pausedUntil = device.overrideUntilMillis?.takeIf { it > now }
+    val title = when {
+        !isLocked -> "Remote screen switch-off"
+        device.lockState == DeviceLockState.BEDTIME_LOCKED -> "Bedtime lock is on"
+        device.lockState == DeviceLockState.LIMIT_REACHED -> "Daily limit reached"
+        device.lockState == DeviceLockState.SCHOOL_LOCKED -> "School hours are on"
+        device.lockState == DeviceLockState.REMOTE_LOCKED -> "Device switched off & locked"
+        else -> "Lock sent · waiting for the phone"
+    }
+    val subtitle = when {
+        isLocked -> "“${device.lockReason ?: device.screenLock.lockReason ?: "Parental lock"}”$untilText"
+        pausedUntil != null -> "Bedtime and the daily limit are paused until ${hm(pausedUntil)}"
+        else -> "Turn off the screen now, later, or for a set time"
+    }
 
     Box(
         modifier = Modifier
@@ -659,13 +770,12 @@ fun RemoteSwitchOffHeroCard(
                 Spacer(modifier = Modifier.width(12.dp))
                 Column {
                     Text(
-                        text = if (isLocked) "Device switched off & locked" else "Remote screen switch-off",
+                        text = title,
                         style = MaterialTheme.typography.titleLarge,
                         color = Color.White
                     )
                     Text(
-                        text = if (isLocked) "Locked for: “${device.lockReason ?: "Parental lock"}”"
-                        else "Turn off the screen and pause the phone instantly",
+                        text = subtitle,
                         style = MaterialTheme.typography.bodyMedium,
                         color = Color.White.copy(alpha = 0.85f)
                     )
@@ -677,8 +787,9 @@ fun RemoteSwitchOffHeroCard(
             // Inverse white pill — the spotlight card's paired CTA per DESIGN.md.
             Surface(
                 onClick = if (isLocked) onRemoteUnlock else onOpenSwitchOffDialog,
+                enabled = !busy,
                 shape = KGShapes.pill,
-                color = Color.White,
+                color = Color.White.copy(alpha = if (busy) 0.6f else 1f),
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 48.dp)
@@ -698,52 +809,93 @@ fun RemoteSwitchOffHeroCard(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = if (isLocked) "Unlock & resume ${device.childName}'s phone" else "Switch off phone",
+                        text = when {
+                            !isLocked -> "Switch off phone"
+                            scheduleLock -> "Unlock for 1 hour"
+                            else -> "Unlock & resume $name's phone"
+                        },
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                 }
             }
 
+            if (isLocked && scheduleLock) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Unlocking pauses bedtime and the daily limit for an hour, then the normal rules apply again.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.85f)
+                )
+            }
+
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Quick bonus screen time rewards — translucent pills on the spotlight ground.
+            // Secondary actions — translucent pills on the spotlight ground.
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                if (!isLocked) {
+                    SpotlightPill(
+                        text = "Later or timed",
+                        icon = Icons.Default.Schedule,
+                        enabled = !busy,
+                        onClick = onOpenLockDialog,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
                 listOf(15, 30).forEach { mins ->
-                    Surface(
+                    SpotlightPill(
+                        text = "+$mins min",
+                        icon = Icons.Default.MoreTime,
+                        enabled = !busy,
                         onClick = { onAddBonusTime(mins) },
-                        shape = KGShapes.pill,
-                        color = Color.White.copy(alpha = 0.16f),
-                        modifier = Modifier
-                            .weight(1f)
-                            .heightIn(min = 44.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                Icons.Default.MoreTime,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "+$mins min bonus",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = Color.White
-                            )
-                        }
-                    }
+                        modifier = Modifier.weight(1f)
+                    )
                 }
             }
+        }
+    }
+}
+
+/** Translucent pill on the gradient spotlight card. */
+@Composable
+private fun SpotlightPill(
+    text: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        shape = KGShapes.pill,
+        color = Color.White.copy(alpha = 0.16f),
+        modifier = modifier.heightIn(min = 44.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = if (enabled) 1f else 0.6f),
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = text,
+                style = MaterialTheme.typography.labelLarge,
+                color = Color.White.copy(alpha = if (enabled) 1f else 0.6f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
@@ -752,9 +904,13 @@ fun RemoteSwitchOffHeroCard(
 fun DailyLimitManagementSection(
     device: ChildDevice,
     activeAgeProfile: AgeProfile,
+    busy: Boolean = false,
     onUpdateDailyLimit: (Int) -> Unit,
     onApplyAgeRecommendation: () -> Unit
 ) {
+    val fmt = ScreenTimeRepository::formatDuration
+    val limit = device.effectiveLimitMinutes
+    val hasLimit = limit > 0
     KGSectionHeader(
         title = "Daily screen time",
         hint = "Set how long ${device.childName} can use the device today."
@@ -773,9 +929,13 @@ fun DailyLimitManagementSection(
                 Text("Today's screen time", style = MaterialTheme.typography.titleMedium)
             }
             Text(
-                text = "${device.usedScreenTimeMinutes}m / ${device.dailyLimitMinutes}m",
+                text = when {
+                    !device.hasReported -> "Not reported"
+                    hasLimit -> "${fmt(device.usedScreenTimeMinutes)} / ${fmt(limit)}"
+                    else -> fmt(device.usedScreenTimeMinutes)
+                },
                 style = MaterialTheme.typography.titleMedium,
-                color = if (device.remainingMinutes == 0) KGColors.danger else MaterialTheme.colorScheme.primary
+                color = if (device.hasReported && hasLimit && device.remainingMinutes == 0) KGColors.danger else MaterialTheme.colorScheme.primary
             )
         }
 
@@ -783,43 +943,55 @@ fun DailyLimitManagementSection(
 
         // Visual progress bar — signal colour only as the day runs out.
         val progress = device.usageProgress
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(10.dp)
-                .clip(KGShapes.pill)
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(progress)
-                    .height(10.dp)
-                    .clip(KGShapes.pill)
-                    .background(
-                        when {
-                            progress >= 1f -> KGColors.danger
-                            progress >= 0.8f -> KGColors.warning
-                            else -> KGColors.success
-                        }
-                    )
-            )
-        }
-
-        Spacer(modifier = Modifier.height(6.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
+        if (!device.hasReported || !hasLimit) {
             Text(
-                text = "${device.remainingMinutes} mins remaining today",
+                text = when {
+                    !device.hasReported -> "${device.childName.ifBlank { "Your child" }}'s phone hasn't reported screen time yet."
+                    else -> "No daily limit · screen time is measured but not capped."
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = KGColors.inkMuted
             )
-            Text(
-                text = "${(progress * 100).toInt()}% used",
-                style = MaterialTheme.typography.bodySmall,
-                fontWeight = FontWeight.SemiBold
-            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(10.dp)
+                    .clip(KGShapes.pill)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(progress)
+                        .height(10.dp)
+                        .clip(KGShapes.pill)
+                        .background(
+                            when {
+                                progress >= 1f -> KGColors.danger
+                                progress >= 0.8f -> KGColors.warning
+                                else -> KGColors.success
+                            }
+                        )
+                )
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "${fmt(device.remainingMinutes)} left today" +
+                        if (device.bonusMinutesToday > 0) " · includes ${fmt(device.bonusMinutesToday)} bonus" else "",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = KGColors.inkMuted
+                )
+                Text(
+                    text = "${(progress * 100).toInt()}% used",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(18.dp))
@@ -836,10 +1008,11 @@ fun DailyLimitManagementSection(
         ) {
             Text("Daily limit", style = MaterialTheme.typography.titleSmall)
             Text(
-                text = "${sliderValue.toInt()} min (${sliderValue.toInt() / 60}h ${sliderValue.toInt() % 60}m)",
+                text = if (sliderValue.toInt() <= 0) "No limit" else fmt(sliderValue.toInt()),
                 style = MaterialTheme.typography.titleMedium
             )
         }
+        // 0 (far left) = no limit, then 15-minute steps up to 6 hours.
         Slider(
             value = sliderValue,
             onValueChange = { pendingLimit = it },
@@ -847,24 +1020,29 @@ fun DailyLimitManagementSection(
                 pendingLimit?.let { onUpdateDailyLimit(it.toInt()) }
                 pendingLimit = null
             },
-            valueRange = 15f..360f,
-            steps = 22
+            enabled = !busy,
+            valueRange = 0f..360f,
+            steps = 23
         )
 
         // Quick preset limit chips
         Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            listOf(45, 60, 90, 120, 150, 180).forEach { mins ->
+            listOf(0, 45, 60, 90, 120, 150, 180).forEach { mins ->
                 val isSelected = device.dailyLimitMinutes == mins
                 Surface(
                     shape = KGShapes.pill,
                     color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh,
-                    modifier = Modifier.clickable { onUpdateDailyLimit(mins) }
+                    modifier = Modifier
+                        .clip(KGShapes.pill)
+                        .clickable(enabled = !busy) { onUpdateDailyLimit(mins) }
                 ) {
                     Text(
-                        text = "${mins}m",
+                        text = if (mins == 0) "No limit" else "${mins}m",
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
@@ -908,6 +1086,7 @@ fun DailyLimitManagementSection(
                 KGSecondaryButton(
                     text = "Apply recommended limit",
                     onClick = onApplyAgeRecommendation,
+                    enabled = !busy,
                     modifier = Modifier.align(Alignment.End)
                 )
             }
@@ -925,13 +1104,17 @@ fun AppUsageBreakdownSection(device: ChildDevice) {
     KGCard(modifier = Modifier.fillMaxWidth()) {
         if (device.appUsages.isEmpty()) {
             Text(
-                text = "No app usage recorded yet today.",
+                text = if (device.hasReported) "No app usage recorded yet today."
+                else "${device.childName.ifBlank { "Your child" }}'s phone hasn't reported app usage yet.",
                 style = MaterialTheme.typography.bodySmall,
                 color = KGColors.inkMuted
             )
         } else {
+            // Bars show progress toward an app's own limit, or its share next to the most-used app.
+            val mostUsed = device.appUsages.maxOf { it.usedMinutes }.coerceAtLeast(1)
             device.appUsages.forEach { app ->
-                val appProgress = (app.usedMinutes.toFloat() / (app.dailyLimitMinutes ?: 60)).coerceIn(0f, 1f)
+                val appLimit = app.dailyLimitMinutes?.takeIf { it > 0 }
+                val appProgress = (app.usedMinutes.toFloat() / (appLimit ?: mostUsed)).coerceIn(0f, 1f)
 
                 Column(modifier = Modifier.padding(vertical = 8.dp)) {
                     Row(
@@ -961,6 +1144,10 @@ fun AppUsageBreakdownSection(device: ChildDevice) {
                                         Spacer(modifier = Modifier.width(6.dp))
                                         KGStatusTag("Active", KGColors.success)
                                     }
+                                    if (app.isBlocked) {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        KGStatusTag("Blocked", KGColors.danger)
+                                    }
                                 }
                                 Text(
                                     app.category,
@@ -970,7 +1157,8 @@ fun AppUsageBreakdownSection(device: ChildDevice) {
                             }
                         }
                         Text(
-                            text = "${app.usedMinutes} min",
+                            text = ScreenTimeRepository.formatDuration(app.usedMinutes) +
+                                (appLimit?.let { " / ${ScreenTimeRepository.formatDuration(it)}" } ?: ""),
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold
                         )
@@ -990,7 +1178,9 @@ fun AppUsageBreakdownSection(device: ChildDevice) {
                                 .fillMaxWidth(appProgress)
                                 .height(6.dp)
                                 .clip(KGShapes.pill)
-                                .background(MaterialTheme.colorScheme.primary)
+                                .background(
+                                    if (appLimit != null && appProgress >= 1f) KGColors.danger else MaterialTheme.colorScheme.primary
+                                )
                         )
                     }
                 }
@@ -1003,8 +1193,15 @@ fun AppUsageBreakdownSection(device: ChildDevice) {
 fun SchedulesSection(
     device: ChildDevice,
     onToggleBedtime: (Boolean) -> Unit,
-    onToggleSchoolMode: (Boolean) -> Unit
+    onToggleSchoolMode: (Boolean) -> Unit,
+    onChangeBedtime: (start: String, end: String) -> Unit = { _, _ -> },
+    onChangeSchoolHours: (start: String, end: String) -> Unit = { _, _ -> },
+    busy: Boolean = false
 ) {
+    var editing by rememberSaveable { mutableStateOf<String?>(null) } // "bedtime" | "school"
+    val name = device.childName.ifBlank { "Your child" }
+    val pausedUntil = device.overrideUntilMillis?.takeIf { it > System.currentTimeMillis() }
+
     KGSectionHeader(
         title = "Schedules",
         hint = "Automatic downtime and focus windows."
@@ -1016,14 +1213,25 @@ fun SchedulesSection(
             title = "Bedtime downtime",
             description = "${device.bedtimeStart} to ${device.bedtimeEnd}",
             checked = device.bedtimeEnabled,
-            onCheckedChange = onToggleBedtime
+            onCheckedChange = onToggleBedtime,
+            enabled = !busy
         )
         Spacer(modifier = Modifier.height(4.dp))
         Text(
-            text = "Automatically powers off the screen and locks all apps overnight so your child can get healthy sleep.",
+            text = "Every night the screen switches off and the phone stays locked until the end time. " +
+                "$name gets a warning 10 minutes before. Emergency calls stay available.",
             style = MaterialTheme.typography.bodySmall,
             color = KGColors.inkMuted
         )
+        if (pausedUntil != null) {
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "Paused until ${DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(pausedUntil))} after you unlocked the phone.",
+                style = MaterialTheme.typography.bodySmall,
+                color = KGColors.warning
+            )
+        }
+        KGTextLink("Change times", onClick = { editing = "bedtime" })
     }
 
     Spacer(modifier = Modifier.height(12.dp))
@@ -1034,14 +1242,40 @@ fun SchedulesSection(
             title = "School hours focus",
             description = "${device.schoolStart} to ${device.schoolEnd}",
             checked = device.schoolEnabled,
-            onCheckedChange = onToggleSchoolMode
+            onCheckedChange = onToggleSchoolMode,
+            enabled = !busy
         )
         Spacer(modifier = Modifier.height(4.dp))
         Text(
-            text = "Restricts gaming, video and social media apps during class hours while keeping approved educational apps available.",
+            text = "Monday to Friday, games, video, music and social apps are paused during these hours. " +
+                "Calls, messages, maps and learning apps keep working.",
             style = MaterialTheme.typography.bodySmall,
             color = KGColors.inkMuted
         )
+        KGTextLink("Change times", onClick = { editing = "school" })
+    }
+
+    when (editing) {
+        "bedtime" -> TimeRangeDialog(
+            title = "Bedtime",
+            start = device.bedtimeStart,
+            end = device.bedtimeEnd,
+            note = if (device.bedtimeEnabled) null else "Saving turns bedtime on.",
+            onDismiss = { editing = null }
+        ) { start, end ->
+            onChangeBedtime(start, end)
+            editing = null
+        }
+        "school" -> TimeRangeDialog(
+            title = "School hours",
+            start = device.schoolStart,
+            end = device.schoolEnd,
+            note = if (device.schoolEnabled) "Applies Monday to Friday." else "Applies Monday to Friday. Saving turns school hours on.",
+            onDismiss = { editing = null }
+        ) { start, end ->
+            onChangeSchoolHours(start, end)
+            editing = null
+        }
     }
 }
 
@@ -1052,17 +1286,22 @@ private fun commandActionColor(action: RemoteAction): Color = when (action) {
     RemoteAction.UNLOCK_DEVICE -> KGColors.success
     RemoteAction.SOUND_ALARM -> KGColors.warning
     RemoteAction.ADD_BONUS_TIME -> KGColors.gradientViolet
+    RemoteAction.TOGGLE_BEDTIME, RemoteAction.TOGGLE_SCHOOL_MODE, RemoteAction.SET_DAILY_LIMIT -> KGColors.accent
     else -> KGColors.inkMuted
 }
 
-/** Signal colour for a command's delivery status. */
+/**
+ * Signal colour for a command's delivery status, as the repository words it:
+ * "Sent · waiting for the phone", "Delivered", "Not delivered · phone was offline".
+ */
 @Composable
 private fun commandStatusColor(status: String): Color {
     val s = status.lowercase()
     return when {
-        s.contains("fail") || s.contains("error") -> KGColors.danger
-        s.contains("pend") || s.contains("send") || s.contains("queue") -> KGColors.warning
-        else -> KGColors.success
+        s.startsWith("not") || s.contains("fail") || s.contains("error") -> KGColors.danger
+        s.contains("waiting") || s.startsWith("sent") || s.contains("pend") -> KGColors.warning
+        s.startsWith("delivered") -> KGColors.success
+        else -> KGColors.inkMuted
     }
 }
 
@@ -1081,7 +1320,8 @@ fun RemoteCommandHistorySection(commandHistory: List<RemoteCommand>) {
                 color = KGColors.inkMuted
             )
         } else {
-            val dateFormat = SimpleDateFormat("HH:mm · MMM d", Locale.getDefault())
+            val locale = androidx.compose.ui.platform.LocalConfiguration.current.locales[0]
+            val dateFormat = remember(locale) { SimpleDateFormat("HH:mm · MMM d", locale) }
             commandHistory.forEach { cmd ->
                 val actionTint = commandActionColor(cmd.action)
                 Row(
@@ -1104,6 +1344,8 @@ fun RemoteCommandHistorySection(commandHistory: List<RemoteCommand>) {
                                 RemoteAction.SOUND_ALARM -> Icons.Default.VolumeUp
                                 RemoteAction.ADD_BONUS_TIME -> Icons.Default.MoreTime
                                 RemoteAction.SET_DAILY_LIMIT -> Icons.Default.Timer
+                                RemoteAction.TOGGLE_BEDTIME -> Icons.Default.Bedtime
+                                RemoteAction.TOGGLE_SCHOOL_MODE -> Icons.Default.School
                                 else -> Icons.Default.History
                             },
                             contentDescription = null,
@@ -1143,6 +1385,8 @@ fun ScreenTimeDashboardPreview() {
                 deviceModel = "Samsung Galaxy A14 5G",
                 androidVersion = "Android 14",
                 isOnline = true,
+                lastSeenMinutesAgo = 0,
+                lastSyncedAtMillis = 0L,
                 batteryPercent = 78,
                 networkName = "Home Wi-Fi (5 GHz)",
                 currentForegroundApp = "YouTube Kids",

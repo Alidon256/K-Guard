@@ -3,7 +3,7 @@ package com.tele.k_guard.data.model
 import kotlinx.serialization.Serializable
 
 /**
- * ScreenLock model matching KidSafe architecture.
+ * A parent lock as the parent set it (the phone reports what it enforces separately).
  * Holds duration in hours and minutes, total seconds, and lock status.
  */
 @Serializable

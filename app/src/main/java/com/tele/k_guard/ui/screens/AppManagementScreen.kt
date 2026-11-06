@@ -25,16 +25,19 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -55,6 +58,7 @@ import com.tele.k_guard.data.model.AgeProfile
 import com.tele.k_guard.data.model.AppAccessInfo
 import com.tele.k_guard.data.model.AppApprovalStatus
 import com.tele.k_guard.data.model.ChildProfile
+import com.tele.k_guard.ui.components.ChildAvatar
 import com.tele.k_guard.ui.components.KGDangerButton
 import com.tele.k_guard.ui.components.KGEmptyState
 import com.tele.k_guard.ui.components.KGPrimaryButton
@@ -84,8 +88,9 @@ fun AppManagementScreen(
     val error by viewModel.error.collectAsState()
     val message by viewModel.message.collectAsState()
 
-    LaunchedEffect(familyId, activeChild?.id) {
-        viewModel.setFamilyAndChild(familyId, activeChild?.id)
+    // Load every child's apps; the child chips below narrow the list on screen.
+    LaunchedEffect(familyId) {
+        viewModel.setFamilyAndChild(familyId, null)
     }
 
     AppManagementContent(
@@ -142,14 +147,27 @@ fun AppManagementContent(
     // Store the app id (saveable primitive) and derive the object, instead of holding an object.
     var editingAppId by rememberSaveable { mutableStateOf<String?>(null) }
     val editingAppLimit = managedApps.firstOrNull { it.id == editingAppId }
+    // Non-null while the top-bar search field is open.
+    var searchQuery by rememberSaveable { mutableStateOf<String?>(null) }
+    val query = searchQuery.orEmpty().trim()
 
-    val pendingCount = managedApps.count { it.approvalStatus == AppApprovalStatus.PENDING_REVIEW }
-
-    val filteredApps = managedApps.filter { app ->
-        val statusMatches = selectedFilter == null || app.approvalStatus == selectedFilter
+    // Child + search scope; the status chip counts follow it so they match the list underneath.
+    val scopedApps = managedApps.filter { app ->
         val childMatches = selectedChildId == null || app.childId.isEmpty() || app.childId == selectedChildId
-        statusMatches && childMatches
+        val searchMatches = query.isEmpty() ||
+            app.appName.contains(query, ignoreCase = true) ||
+            app.packageName.contains(query, ignoreCase = true)
+        childMatches && searchMatches
     }
+    fun countOf(status: AppApprovalStatus) = scopedApps.count { it.approvalStatus == status }
+
+    // The header badge stays family-wide (or per chosen child), independent of search.
+    val pendingCount = managedApps.count {
+        it.approvalStatus == AppApprovalStatus.PENDING_REVIEW &&
+            (selectedChildId == null || it.childId.isEmpty() || it.childId == selectedChildId)
+    }
+
+    val filteredApps = scopedApps.filter { selectedFilter == null || it.approvalStatus == selectedFilter }
 
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -172,7 +190,16 @@ fun AppManagementContent(
             KGuardTopAppBar(
                 title = "App Management & Approvals",
                 canNavigateBack = true,
-                onNavigateBack = onNavigateBack
+                onNavigateBack = onNavigateBack,
+                searchQuery = searchQuery,
+                onSearchQueryChange = { searchQuery = it },
+                onSearchClose = { searchQuery = null },
+                searchPlaceholder = "Search apps or packages",
+                actions = {
+                    IconButton(onClick = { searchQuery = "" }) {
+                        Icon(Icons.Default.Search, contentDescription = "Search apps")
+                    }
+                }
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -223,8 +250,8 @@ fun AppManagementContent(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Child filter row if multiple children exist
-            if (children.size > 1) {
+            // Child filter row (shown even for a single child so it's clear whose apps these are)
+            if (children.isNotEmpty()) {
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.padding(vertical = 4.dp)
@@ -242,7 +269,7 @@ fun AppManagementContent(
                             selected = selectedChildId == c.id,
                             onClick = { selectedChildId = c.id },
                             label = { Text(c.name) },
-                            leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                            leadingIcon = { ChildAvatar(c, 20.dp) }
                         )
                     }
                 }
@@ -257,28 +284,28 @@ fun AppManagementContent(
                     FilterChip(
                         selected = selectedFilter == null,
                         onClick = { selectedFilter = null },
-                        label = { Text("All (${managedApps.size})") }
+                        label = { Text("All (${scopedApps.size})") }
                     )
                 }
                 item {
                     FilterChip(
                         selected = selectedFilter == AppApprovalStatus.PENDING_REVIEW,
                         onClick = { selectedFilter = AppApprovalStatus.PENDING_REVIEW },
-                        label = { Text("Needs Approval ($pendingCount)") }
+                        label = { Text("Needs Approval (${countOf(AppApprovalStatus.PENDING_REVIEW)})") }
                     )
                 }
                 item {
                     FilterChip(
                         selected = selectedFilter == AppApprovalStatus.APPROVED,
                         onClick = { selectedFilter = AppApprovalStatus.APPROVED },
-                        label = { Text("Approved (${managedApps.count { it.approvalStatus == AppApprovalStatus.APPROVED }})") }
+                        label = { Text("Approved (${countOf(AppApprovalStatus.APPROVED)})") }
                     )
                 }
                 item {
                     FilterChip(
                         selected = selectedFilter == AppApprovalStatus.REJECTED,
                         onClick = { selectedFilter = AppApprovalStatus.REJECTED },
-                        label = { Text("Rejected (${managedApps.count { it.approvalStatus == AppApprovalStatus.REJECTED }})") }
+                        label = { Text("Rejected (${countOf(AppApprovalStatus.REJECTED)})") }
                     )
                 }
             }
@@ -309,6 +336,12 @@ fun AppManagementContent(
                             icon = Icons.Default.Apps,
                             title = "No apps yet",
                             description = "Apps your child installs will appear here for approval."
+                        )
+                    } else if (query.isNotEmpty()) {
+                        KGEmptyState(
+                            icon = Icons.Default.Search,
+                            title = "No matches",
+                            description = "No apps match \"$query\"."
                         )
                     } else {
                         // Apps exist, but the active filter/child selection excludes them all.
@@ -457,6 +490,15 @@ private fun ManagedAppCard(
                 text = "Safety ${app.safetyScore}",
                 color = scoreColor
             )
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            // Block switch: on = blocked (rejected), off = allowed (approved).
+            Switch(
+                checked = app.approvalStatus == AppApprovalStatus.REJECTED,
+                onCheckedChange = { block -> if (block) onReject() else onApprove() },
+                enabled = !busy
+            )
         }
 
         // Safety reason / suitability details
@@ -498,12 +540,16 @@ private fun ManagedAppCard(
                 )
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(
-                    text = "Daily limit: ${app.dailyLimitMinutes}m",
+                    text = if (app.dailyLimitMinutes > 0) "Daily limit: ${app.dailyLimitMinutes}m" else "No daily limit",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface
                 )
             }
 
+            if (!app.installed) {
+                KGStatusTag(text = "Uninstalled", color = KGColors.inkMuted)
+                Spacer(modifier = Modifier.width(6.dp))
+            }
             KGStatusTag(
                 text = when (app.approvalStatus) {
                     AppApprovalStatus.APPROVED -> "APPROVED"
@@ -518,47 +564,30 @@ private fun ManagedAppCard(
             )
         }
 
-        // Inline actions — pending apps get Approve / Decline, approved apps keep Revoke,
-        // rejected apps show nothing.
-        when (app.approvalStatus) {
-            AppApprovalStatus.PENDING_REVIEW -> {
-                Spacer(modifier = Modifier.height(12.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    KGSecondaryButton(
-                        text = "Approve",
-                        onClick = onApprove,
-                        enabled = !busy,
-                        leading = {
-                            Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                        }
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    KGDangerButton(
-                        text = "Decline",
-                        onClick = onReject,
-                        enabled = !busy
-                    )
-                }
+        // Pending apps get explicit Approve / Decline; approved and rejected apps
+        // are toggled with the block switch above (it replaces the old Revoke button).
+        if (app.approvalStatus == AppApprovalStatus.PENDING_REVIEW) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                KGSecondaryButton(
+                    text = "Approve",
+                    onClick = onApprove,
+                    enabled = !busy,
+                    leading = {
+                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                    }
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                KGDangerButton(
+                    text = "Decline",
+                    onClick = onReject,
+                    enabled = !busy
+                )
             }
-            AppApprovalStatus.APPROVED -> {
-                Spacer(modifier = Modifier.height(12.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    KGDangerButton(
-                        text = "Revoke",
-                        onClick = onReject,
-                        enabled = !busy
-                    )
-                }
-            }
-            AppApprovalStatus.REJECTED -> Unit
         }
     }
 }

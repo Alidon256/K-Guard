@@ -509,6 +509,10 @@ class KGuardCompanionService : Service() {
             .setAutoCancel(true)
             .setTimeoutAfter(60_000)
             .build()
+        val canNotify = android.os.Build.VERSION.SDK_INT < 33 ||
+            androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.POST_NOTIFICATIONS) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (!canNotify) { Log.w(TAG, "Notifications are off; the removal prompt can't be shown"); return }
         runCatching { NotificationManagerCompat.from(this).notify(GUARD_NOTIFICATION_ID, n) }
             .onFailure { Log.w(TAG, "Could not show the removal prompt", it) }
     }

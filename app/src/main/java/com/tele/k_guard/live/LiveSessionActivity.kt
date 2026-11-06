@@ -11,6 +11,8 @@ import androidx.activity.result.contract.ActivityResultContracts
  * Invisible step that starts K-Guard Live: shows Android's screen-sharing prompt, hands the result to
  * [LiveWatchService], and closes, leaving the child on the screen they were on.
  */
+// A plain ComponentActivity (no Fragments), so the Fragment-version check does not apply.
+@android.annotation.SuppressLint("InvalidFragmentVersionForActivityResult")
 class LiveSessionActivity : ComponentActivity() {
 
     private val consent = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
