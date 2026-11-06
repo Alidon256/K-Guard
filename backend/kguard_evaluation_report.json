@@ -10,7 +10,49 @@
     "image_only_valid_schema_rate": 1.0,
     "text_context_valid_schema_rate": 1.0,
     "action_agreement_image_vs_text": 0.9166666666666666,
-    "category_agreement_image_vs_text": 0.9166666666666666
+    "category_agreement_image_vs_text": 0.9166666666666666,
+    "image_only_classification": {
+      "accuracy": 0.9166666666666666,
+      "precision": 1.0,
+      "recall": 0.8571428571428571,
+      "f1": 0.9230769230769231,
+      "specificity": 1.0,
+      "balanced_accuracy": 0.9285714285714286,
+      "positive_label": "BLUR",
+      "confusion_matrix": {
+        "true_positive": 6,
+        "true_negative": 5,
+        "false_positive": 0,
+        "false_negative": 1
+      }
+    },
+    "text_context_classification": {
+      "accuracy": 0.8333333333333334,
+      "precision": 1.0,
+      "recall": 0.7142857142857143,
+      "f1": 0.8333333333333333,
+      "specificity": 1.0,
+      "balanced_accuracy": 0.8571428571428572,
+      "positive_label": "BLUR",
+      "confusion_matrix": {
+        "true_positive": 5,
+        "true_negative": 5,
+        "false_positive": 0,
+        "false_negative": 2
+      }
+    },
+    "image_only_category_classification": {
+      "accuracy": 0.9166666666666666,
+      "macro_precision": 0.9722222222222223,
+      "macro_recall": 0.9166666666666666,
+      "macro_f1": 0.9292929292929294
+    },
+    "text_context_category_classification": {
+      "accuracy": 0.8333333333333334,
+      "macro_precision": 0.7857142857142857,
+      "macro_recall": 0.75,
+      "macro_f1": 0.75
+    }
   },
   "distributions": {
     "image_only_actions": {
@@ -219,5 +261,5 @@
       "category_agreement": true
     }
   ],
-  "note": "No ground-truth manifest exists in the dataset; accuracy, precision, recall, and F1 are therefore not computed."
+  "note": "Classification metrics use provisional ground-truth labels inferred from filenames because the dataset has no formal annotation manifest. BLUR is treated as the positive class for action metrics."
 }
