@@ -48,10 +48,7 @@ fun ProfileScreen(
         user = user,
         selectedChild = selectedChild,
         isChildDevice = isChildDevice,
-        onSignOut = {
-            session.signOut()
-            onSignOut()
-        },
+        onSignOut = { session.signOut(onDone = onSignOut) },
         onNavigateBack = onNavigateBack
     )
 }

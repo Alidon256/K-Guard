@@ -122,6 +122,25 @@ object FamilyRepository {
         return id
     }
 
+    /** A paired child's phone may read only its own profile (see firestore.rules), never the whole list. */
+    fun linkedChild(familyId: String, uid: String): Flow<List<ChildProfile>> = callbackFlow {
+        val reg = db.collection("families/$familyId/children")
+            .whereEqualTo("linkedUid", uid)
+            .addSnapshotListener { snap, err ->
+                if (err != null) {
+                    Log.e("KGuard", "FamilyRepository: linked child listener error", err)
+                    close(err)
+                    return@addSnapshotListener
+                }
+                trySend(snap?.documents.orEmpty().mapNotNull { d -> d.toObject(ChildProfile::class.java)?.copy(id = d.id) })
+            }
+        awaitClose { reg.remove() }
+    }
+
+    suspend fun updateChildPhoto(familyId: String, childId: String, photoUrl: String) {
+        db.document("families/$familyId/children/$childId").update("photoUrl", photoUrl).await()
+    }
+
     suspend fun deleteChild(familyId: String, childId: String) {
         Log.d("KGuard", "FamilyRepository: deleteChild familyId=$familyId, childId=$childId")
         db.document("families/$familyId/children/$childId").delete().await()
@@ -249,6 +268,16 @@ object FamilyRepository {
     }
 
     // ---------- push ----------
+    /** Stops pushes reaching this phone after sign-out (the next account gets a fresh token). */
+    suspend fun unregisterPushToken() {
+        val uid = currentUser?.uid ?: return
+        runCatching {
+            val t = FirebaseMessaging.getInstance().token.await()
+            db.document("users/$uid").update("fcmTokens", FieldValue.arrayRemove(t)).await()
+        }.onFailure { Log.w("KGuard", "FamilyRepository: could not remove push token", it) }
+        runCatching { FirebaseMessaging.getInstance().deleteToken().await() }
+    }
+
     suspend fun registerPushToken(token: String? = null) {
         val uid = currentUser?.uid ?: return
         val t = token ?: FirebaseMessaging.getInstance().token.await()

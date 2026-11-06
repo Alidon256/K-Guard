@@ -8,6 +8,7 @@ import com.tele.k_guard.data.model.ChildProfile
 import com.tele.k_guard.data.model.FamilyPrivacy
 import com.tele.k_guard.data.model.ParentAction
 import com.tele.k_guard.data.model.SafetyEvent
+import com.tele.k_guard.data.repository.ChildPhotoRepository
 import com.tele.k_guard.data.repository.FamilyRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -59,16 +60,28 @@ class SessionViewModel : ViewModel() {
     // must then never overwrite _familyId (it resolves after pairing and would clobber it).
     private var pairedDevice = false
 
-    val children: StateFlow<List<ChildProfile>> = _familyId
-        .flatMapLatest { id -> if (id == null) flowOf(emptyList()) else repo.children(id).resilient(emptyList()) }
+    /** Child devices are anonymous identities (parents sign in with Google only). */
+    val isChildDevice: StateFlow<Boolean> = _user.map { it?.isAnonymous == true }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, repo.currentUser?.isAnonymous == true)
+
+    /** Parent: every child in the family. Child device: only its own profile (all the rules allow it to read). */
+    val children: StateFlow<List<ChildProfile>> = combine(_familyId, _user) { id, u -> id to u }
+        .flatMapLatest { (id, u) ->
+            when {
+                id == null || u == null -> flowOf(emptyList())
+                u.isAnonymous -> repo.linkedChild(id, u.uid).resilient(emptyList())
+                else -> repo.children(id).resilient(emptyList())
+            }
+        }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    val events: StateFlow<List<SafetyEvent>> = _familyId
-        .flatMapLatest { id -> if (id == null) flowOf(emptyList()) else repo.events(id).resilient(emptyList()) }
+    // Safety alerts and privacy settings are for parents; a child device is not allowed to read them.
+    val events: StateFlow<List<SafetyEvent>> = combine(_familyId, isChildDevice) { id, child -> id to child }
+        .flatMapLatest { (id, child) -> if (id == null || child) flowOf(emptyList()) else repo.events(id).resilient(emptyList()) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    val privacy: StateFlow<FamilyPrivacy> = _familyId
-        .flatMapLatest { id -> if (id == null) flowOf(FamilyPrivacy()) else repo.privacy(id).resilient(FamilyPrivacy()) }
+    val privacy: StateFlow<FamilyPrivacy> = combine(_familyId, isChildDevice) { id, child -> id to child }
+        .flatMapLatest { (id, child) -> if (id == null || child) flowOf(FamilyPrivacy()) else repo.privacy(id).resilient(FamilyPrivacy()) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, FamilyPrivacy())
 
     /** The child currently being protected/tested; defaults to the first child. */
@@ -77,9 +90,9 @@ class SessionViewModel : ViewModel() {
     }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /** Badge count from a dedicated open-events listener, so old OPEN alerts outside the 100-event window still count. */
-    val openAlertCount: StateFlow<Int> = _familyId
-        .flatMapLatest { id ->
-            if (id == null) flowOf(emptyList<SafetyEvent>()) else repo.openEvents(id).resilient(emptyList())
+    val openAlertCount: StateFlow<Int> = combine(_familyId, isChildDevice) { id, child -> id to child }
+        .flatMapLatest { (id, child) ->
+            if (id == null || child) flowOf(emptyList<SafetyEvent>()) else repo.openEvents(id).resilient(emptyList())
         }
         .map { list -> list.count { it.isOpen } }
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
@@ -139,19 +152,39 @@ class SessionViewModel : ViewModel() {
         if (cid != null) _selectedChildId.value = cid
     }
 
-    fun signOut() {
-        // Clear synchronously; the auth listener clears the rest when the user is nulled.
-        pairedDevice = false
-        _pairingCode.value = null
-        _error.value = null
-        _selectedChildId.value = null
-        repo.signOut()
+    /** Removes this phone's push token first, so the next account on it gets no stale alerts. */
+    fun signOut(onDone: () -> Unit = {}) {
+        viewModelScope.launch {
+            _busy.value = true
+            try {
+                runCatching { repo.unregisterPushToken() }
+            } finally {
+                // The auth listener clears the rest when the user is nulled.
+                pairedDevice = false
+                _pairingCode.value = null
+                _error.value = null
+                _selectedChildId.value = null
+                repo.signOut()
+                _busy.value = false
+                onDone()
+            }
+        }
     }
 
-    fun saveChild(child: ChildProfile, onDone: () -> Unit = {}) = launchBusy {
+    /**
+     * Saves the profile, then uploads [newPhoto] (a JPEG from ChildPhotoRepository.prepare) so it shows on
+     * every phone in the family. Only http(s) photo URLs are ever stored; a local path works on one phone only.
+     */
+    fun saveChild(child: ChildProfile, newPhoto: ByteArray? = null, onDone: () -> Unit = {}) = launchBusy {
         val fid = _familyId.value ?: error("Your family is not ready yet.")
         require(child.name.isNotBlank()) { "Please enter a name." }
-        val id = repo.saveChild(fid, child)
+        val clean = child.copy(photoUrl = child.photoUrl.takeIf { it.startsWith("http") }.orEmpty())
+        val id = repo.saveChild(fid, clean)
+        if (newPhoto != null) {
+            val url = runCatching { ChildPhotoRepository.upload(id, newPhoto) }
+                .getOrElse { throw IllegalStateException("The profile was saved, but the photo couldn't be uploaded. Check the connection and try again.") }
+            repo.updateChildPhoto(fid, id, url)
+        }
         if (_selectedChildId.value == null) _selectedChildId.value = id
         onDone()
     }

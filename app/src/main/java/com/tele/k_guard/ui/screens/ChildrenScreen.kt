@@ -1,5 +1,7 @@
 package com.tele.k_guard.ui.screens
 
+import com.tele.k_guard.ui.components.ChildAvatar
+
 import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -192,32 +194,6 @@ private fun ChildRowCard(
 }
 
 /** Circular child photo: the picked image when present, otherwise the initial letter on a surface disc. */
-@Composable
-private fun ChildAvatar(child: ChildProfile, size: androidx.compose.ui.unit.Dp) {
-    if (child.photoUrl.isNotBlank()) {
-        AsyncImage(
-            model = child.photoUrl,
-            contentDescription = null,
-            modifier = Modifier.size(size).clip(KGShapes.circle),
-            contentScale = ContentScale.Crop
-        )
-    } else {
-        Box(
-            modifier = Modifier
-                .size(size)
-                .clip(KGShapes.circle)
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                child.name.firstOrNull()?.uppercase() ?: "•",
-                style = if (size >= 96.dp) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.titleLarge,
-                color = KGColors.inkMuted
-            )
-        }
-    }
-}
-
 /** Create or edit a child: name (required), optional photo from the device gallery, age group, per-category rules and reveal permission. Child devices pair anonymously, so no email is collected. */
 @Composable
 fun ChildEditorScreen(

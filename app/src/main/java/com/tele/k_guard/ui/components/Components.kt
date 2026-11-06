@@ -1,5 +1,10 @@
 package com.tele.k_guard.ui.components
 
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.TextField
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -86,18 +91,46 @@ fun KGuardTopAppBar(
     title: String,
     canNavigateBack: Boolean = false,
     onNavigateBack: () -> Unit = {},
+    /** Non-null turns the title into a search field (see [onSearchQueryChange], [onSearchClose]). */
+    searchQuery: String? = null,
+    onSearchQueryChange: (String) -> Unit = {},
+    onSearchClose: () -> Unit = {},
+    searchPlaceholder: String = "Search",
     actions: @Composable () -> Unit = {}
 ) {
     TopAppBar(
         title = {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
-            )
+            if (searchQuery != null) {
+                val focus = remember { FocusRequester() }
+                LaunchedEffect(Unit) { focus.requestFocus() }
+                TextField(
+                    value = searchQuery,
+                    onValueChange = onSearchQueryChange,
+                    placeholder = { Text(searchPlaceholder) },
+                    singleLine = true,
+                    shape = KGShapes.input,
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                        focusedIndicatorColor = Color.Transparent,
+                        unfocusedIndicatorColor = Color.Transparent
+                    ),
+                    modifier = Modifier.fillMaxWidth().focusRequester(focus)
+                )
+            } else {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         },
         navigationIcon = {
-            if (canNavigateBack) {
+            if (searchQuery != null) {
+                IconButton(onClick = onSearchClose) {
+                    Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close search")
+                }
+            } else if (canNavigateBack) {
                 IconButton(onClick = onNavigateBack) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
@@ -106,7 +139,7 @@ fun KGuardTopAppBar(
                 }
             }
         },
-        actions = { actions() },
+        actions = { if (searchQuery == null) actions() },
         colors = TopAppBarDefaults.topAppBarColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
         )
