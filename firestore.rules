@@ -7,6 +7,11 @@ service cloud.firestore {
     function isParent(fid) {
       return signedIn() && request.auth.uid in family(fid).data.parentUids;
     }
+    // True when the signed-in user is the child account paired with this child profile.
+    function isLinkedChild(fid, cid) {
+      return signedIn()
+        && get(/databases/$(database)/documents/families/$(fid)/children/$(cid)).data.get('linkedUid', null) == request.auth.uid;
+    }
     function onlyChanges(keys) {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
     }
@@ -39,10 +44,16 @@ service cloud.firestore {
         allow delete: if isParent(familyId);
       }
 
-      // Events are written by Functions (Admin SDK). Parents may only record their review.
+      // Events are written by Cloud Functions or by the paired child's phone (Live AI). Parents review them.
       match /events/{eventId} {
         allow read: if isParent(familyId);
-        allow create, delete: if false;
+        allow create: if isLinkedChild(familyId, request.resource.data.childId)
+                      && request.resource.data.keys().hasOnly(['childId', 'childName', 'ageProfile', 'contentType',
+                           'category', 'riskScore', 'decision', 'context', 'explanation', 'source', 'snippet',
+                           'storagePath', 'status', 'createdAt'])
+                      && request.resource.data.status == 'open'
+                      && request.resource.data.decision in ['ALLOW', 'WARN', 'BLUR', 'BLOCK', 'REVIEW'];
+        allow delete: if false;
         allow update: if isParent(familyId)
                       && onlyChanges(['status', 'parentAction', 'parentNote', 'reviewedAt'])
                       && request.resource.data.status in ['open', 'reviewed']
@@ -50,27 +61,64 @@ service cloud.firestore {
                           || request.resource.data.parentAction in ['allow', 'keep_blocked', 'dismiss']);
       }
 
+      // App requests and decisions go through Cloud Functions (so both phones are notified).
+      // The paired child's phone reads its own apps to enforce them; parents may change per-app limits.
       match /apps/{appId} {
-        // Parents can read all apps; linked children can read apps assigned to their profile
         allow read: if isParent(familyId)
                     || (signedIn() && resource.data.childLinkedUid == request.auth.uid);
-        // Parents can approve/reject, configure limits, and manage apps
-        allow write: if isParent(familyId);
-        // Children linked to this family can create an install approval request in PENDING_REVIEW status
-        allow create: if signedIn()
-                      && request.resource.data.childLinkedUid == request.auth.uid
-                      && request.resource.data.approvalStatus == 'PENDING_REVIEW';
+        allow create: if false;
+        allow update: if isParent(familyId) && onlyChanges(['dailyLimitMinutes'])
+                      && request.resource.data.dailyLimitMinutes is int
+                      && request.resource.data.dailyLimitMinutes >= 0 && request.resource.data.dailyLimitMinutes <= 1440;
+        allow delete: if isParent(familyId);
+      }
+      // Install and uninstall history, written by Cloud Functions.
+      match /appActivity/{activityId} {
+        allow read: if isParent(familyId);
+        allow write: if false;
       }
       match /screenTime/{childId} {
-        allow read: if isParent(familyId);
-        allow write: if isParent(familyId);
+        allow read, write: if isParent(familyId);
       }
+      // Screen time: the parent writes only the rules; the paired child's phone writes only telemetry.
+      // Neither can change the other's fields, so a child cannot raise their own limit.
       match /devices/{childId} {
-        allow read: if isParent(familyId) || (signedIn() && resource.data.linkedUid == request.auth.uid);
-        allow write: if isParent(familyId) || (signedIn() && request.resource.data.linkedUid == request.auth.uid);
+        function ruleKeys() {
+          return ['dailyLimitMinutes', 'bonusMinutes', 'bonusDate', 'bedtimeEnabled', 'bedtimeStart', 'bedtimeEnd',
+                  'schoolEnabled', 'schoolStart', 'schoolEnd', 'schoolDays', 'remoteLock', 'overrideUntil',
+                  'policyInitialized', 'policyInitializedAt'];
+        }
+        function changed() {
+          return request.resource.data.diff(resource == null ? {} : resource.data).affectedKeys();
+        }
+        allow read: if isParent(familyId) || isLinkedChild(familyId, childId);
+        allow create, update: if isParent(familyId) && changed().hasOnly(ruleKeys());
+        allow create, update: if isLinkedChild(familyId, childId) && !changed().hasAny(ruleKeys());
+        allow delete: if isParent(familyId);
+
+        // Daily usage history from the child's phone.
+        match /days/{day} {
+          allow read: if isParent(familyId) || isLinkedChild(familyId, childId);
+          allow write: if isLinkedChild(familyId, childId);
+        }
       }
+      // Parent actions and their delivery receipts. The child's phone may only mark them executed.
       match /commands/{commandId} {
-        allow read, write: if isParent(familyId) || signedIn();
+        allow read: if isParent(familyId) || isLinkedChild(familyId, resource.data.childId);
+        allow create: if isParent(familyId) && request.resource.data.status == 'pending';
+        allow update: if isLinkedChild(familyId, resource.data.childId)
+                      && onlyChanges(['status', 'executedAt'])
+                      && request.resource.data.status in ['executed', 'expired'];
+        allow delete: if isParent(familyId);
+      }
+      // Web protection: the parent sets it; the paired child's phone applies it and reports only its status.
+      match /webProtection/{childId} {
+        allow read: if isParent(familyId) || isLinkedChild(familyId, childId);
+        allow create, update: if isParent(familyId)
+                              && (!('device' in request.resource.data.diff(resource == null ? {} : resource.data).affectedKeys()));
+        allow create, update: if isLinkedChild(familyId, childId)
+                              && request.resource.data.diff(resource == null ? {} : resource.data).affectedKeys().hasOnly(['device']);
+        allow delete: if isParent(familyId);
       }
     }
 

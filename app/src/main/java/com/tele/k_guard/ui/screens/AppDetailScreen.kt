@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -29,7 +30,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,6 +48,7 @@ import com.tele.k_guard.ui.components.KGEmptyState
 import com.tele.k_guard.ui.components.KGPrimaryButton
 import com.tele.k_guard.ui.components.KGSecondaryButton
 import com.tele.k_guard.ui.components.KGStatusTag
+import com.tele.k_guard.ui.components.KGTextLink
 import com.tele.k_guard.ui.components.KGuardTopAppBar
 import com.tele.k_guard.ui.theme.KGColors
 import com.tele.k_guard.ui.theme.KGShapes
@@ -93,6 +97,9 @@ fun AppDetailContent(
     onUpdateLimit: (Int) -> Unit,
     onNavigateBack: () -> Unit
 ) {
+    // Which decision is awaiting confirmation: "approve", "reject" or null.
+    var confirming by rememberSaveable { mutableStateOf<String?>(null) }
+
     Scaffold(
         topBar = {
             KGuardTopAppBar(
@@ -268,7 +275,7 @@ fun AppDetailContent(
                         )
                     }
                     Text(
-                        text = "$limitMinutes minutes",
+                        text = if (limitMinutes > 0) "$limitMinutes minutes" else "No daily limit",
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -279,11 +286,11 @@ fun AppDetailContent(
                 Slider(
                     value = limitMinutes.toFloat(),
                     onValueChange = { limitMinutes = it.toInt() },
-                    valueRange = 15f..240f,
-                    steps = 14
+                    valueRange = 0f..240f,
+                    steps = 15
                 )
                 Text(
-                    text = "Slide to adjust allowed daily usage time for ${app.appName}.",
+                    text = "Slide to adjust allowed daily usage time for ${app.appName}. All the way left removes the limit.",
                     style = MaterialTheme.typography.bodySmall,
                     color = KGColors.inkMuted
                 )
@@ -309,12 +316,12 @@ fun AppDetailContent(
                 ) {
                     KGDangerButton(
                         text = "Reject / Revoke",
-                        onClick = onReject,
+                        onClick = { confirming = "reject" },
                         modifier = Modifier.weight(1f)
                     )
                     KGPrimaryButton(
                         text = "Approve",
-                        onClick = onApprove,
+                        onClick = { confirming = "approve" },
                         modifier = Modifier.weight(1f),
                         leading = {
                             Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -325,6 +332,30 @@ fun AppDetailContent(
 
             Spacer(modifier = Modifier.height(8.dp))
         }
+    }
+
+    if (app != null && confirming != null) {
+        val approving = confirming == "approve"
+        AlertDialog(
+            onDismissRequest = { confirming = null },
+            title = { Text(if (approving) "Approve ${app.appName}?" else "Reject ${app.appName}?") },
+            text = {
+                Text(
+                    if (approving) "Your child will be able to install and use ${app.appName} within the daily limit you set."
+                    else "${app.appName} will be blocked on your child's phone. You can approve it again later."
+                )
+            },
+            confirmButton = {
+                if (approving) {
+                    KGPrimaryButton(text = "Approve", onClick = { onApprove(); confirming = null })
+                } else {
+                    KGDangerButton(text = "Reject", onClick = { onReject(); confirming = null })
+                }
+            },
+            dismissButton = {
+                KGTextLink(text = "Cancel", onClick = { confirming = null })
+            }
+        )
     }
 }
 

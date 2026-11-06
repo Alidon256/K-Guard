@@ -1,6 +1,6 @@
 import { initializeApp } from "firebase-admin/app";
 import { FieldValue, getFirestore, Timestamp } from "firebase-admin/firestore";
-import { getMessaging } from "firebase-admin/messaging";
+import { getMessaging, MulticastMessage } from "firebase-admin/messaging";
 import { getStorage } from "firebase-admin/storage";
 import { onCall, HttpsError, CallableRequest } from "firebase-functions/v2/https";
 import { onDocumentCreated, onDocumentWritten } from "firebase-functions/v2/firestore";
@@ -36,7 +36,10 @@ async function userDoc(uid: string) {
 export const createFamily = onCall(async (req) => {
   const uid = requireAuth(req);
   const user = await userDoc(uid);
-  if (user.familyId) return { familyId: user.familyId, role: user.role };
+  if (user.familyId) return { familyId: user.familyId, role: user.role, childId: user.childId ?? null };
+  if (req.auth?.token.firebase?.sign_in_provider === "anonymous") {
+    throw new HttpsError("permission-denied", "Child devices pair with a code; they don't create families.");
+  }
 
   const famRef = db.collection("families").doc();
   await db.runTransaction(async (tx) => {
@@ -57,7 +60,7 @@ export const createFamily = onCall(async (req) => {
       { merge: true },
     );
   });
-  return { familyId: famRef.id, role: "parent" };
+  return { familyId: famRef.id, role: "parent", childId: null };
 });
 
 // ---------------------------------------------------------------- pairing & OTP
@@ -95,9 +98,25 @@ export const redeemPairingCode = onCall(async (req) => {
     throw new HttpsError("not-found", "That code is invalid or has expired.");
   }
   const user = await userDoc(uid);
-  if (user.role === "parent") throw new HttpsError("failed-precondition", "This account is a parent account.");
+  let emptyFamilyToRelease: string | null = null;
+  if (user.role === "parent" && user.familyId) {
+    // Parents sign in with Google only; only an anonymous child device may release an empty family.
+    if (req.auth?.token.firebase?.sign_in_provider !== "anonymous") {
+      throw new HttpsError("failed-precondition", "This account is a parent account.");
+    }
+    // A child device that signed in before entering its code may have been given an empty family.
+    // Release it only if nothing was ever set up in it.
+    const fam = (await db.doc(`families/${user.familyId}`).get()).data() as any;
+    const children = await db.collection(`families/${user.familyId}/children`).limit(1).get();
+    const soleOwner = fam && fam.ownerUid === uid && (fam.parentUids ?? []).length === 1;
+    if (!soleOwner || !children.empty) {
+      throw new HttpsError("failed-precondition", "This account already manages a family. Sign in with the child's own account.");
+    }
+    emptyFamilyToRelease = user.familyId;
+  }
 
   await db.runTransaction(async (tx) => {
+    if (emptyFamilyToRelease) tx.delete(db.doc(`families/${emptyFamilyToRelease}`));
     tx.update(db.doc(`families/${data.familyId}/children/${data.childId}`), { linkedUid: uid });
     tx.set(
       db.doc(`users/${uid}`),
@@ -215,9 +234,10 @@ export const moderateContent = onCall({ timeoutSeconds: 60, memory: "512MiB" }, 
 export const reportWebBlock = onCall(async (req) => {
   const uid = requireAuth(req);
   const user = await userDoc(uid);
-  if (user.role !== "parent" || !user.familyId) throw new HttpsError("permission-denied", "Parents only.");
+  if (!user.familyId) throw new HttpsError("permission-denied", "Create or join a family first.");
   const familyId: string = user.familyId;
-  const childId = String(req.data?.childId ?? "");
+  // On a paired child's phone the child id comes from the server-side profile, never from the request.
+  const childId = user.role === "child" ? String(user.childId ?? "") : String(req.data?.childId ?? "");
   const rawCat = String(req.data?.category ?? "custom");
   const domain = String(req.data?.domain ?? "").toLowerCase().slice(0, 253);
   if (!/^[a-z0-9.-]+$/.test(domain)) throw new HttpsError("invalid-argument", "Invalid domain.");
@@ -228,7 +248,8 @@ export const reportWebBlock = onCall(async (req) => {
   ]);
   const family = famSnap.data() as any;
   const child = childSnap.data() as any;
-  if (!family || !child || !family.parentUids.includes(uid)) throw new HttpsError("not-found", "Child profile not found.");
+  const allowed = user.role === "child" ? child?.linkedUid === uid : (family?.parentUids ?? []).includes(uid);
+  if (!family || !child || !allowed) throw new HttpsError("not-found", "Child profile not found.");
 
   const category = (CATEGORIES as readonly string[]).includes(rawCat) ? (rawCat as Category) : null;
   const privacy = { ...DEFAULT_PRIVACY, ...(family.privacy ?? {}) };
@@ -252,6 +273,64 @@ export const reportWebBlock = onCall(async (req) => {
   return { ok: true };
 });
 
+// ---------------------------------------------------------------- web protection status from the child's phone
+export const onWebProtectionStatus = onDocumentWritten("families/{familyId}/webProtection/{childId}", async (event) => {
+  const before = event.data?.before?.data()?.device ?? {};
+  const after = event.data?.after?.data();
+  if (!after || !after.enabled) return; // nothing to warn about when the parent has it off
+  const dev = after.device ?? {};
+  const { familyId, childId } = event.params;
+
+  const turnedOff = dev.turnedOffOnDevice === true && before.turnedOffOnDevice !== true;
+  const needsTap = dev.needsConsent === true && before.needsConsent !== true;
+  if (!turnedOff && !needsTap) return;
+
+  const [fam, child] = await Promise.all([
+    db.doc(`families/${familyId}`).get().then((s) => s.data() as any),
+    db.doc(`families/${familyId}/children/${childId}`).get().then((s) => s.data() as any),
+  ]);
+  if (!fam) return;
+  const name = child?.name || "Your child";
+  await pushToUsers((fam.parentUids as string[]) ?? [], {
+    notification: turnedOff
+      ? { title: "Web protection was switched off", body: `Web protection was switched off on ${name}'s phone. K-Guard is turning it back on.` }
+      : { title: "Web protection needs one tap", body: `Android needs someone to allow web protection on ${name}'s phone once. A notification is waiting there.` },
+    data: { type: "web_protection_status", familyId, childId },
+    android: { priority: "high", notification: { channelId: "safety_alerts" } },
+  });
+});
+
+// ---------------------------------------------------------------- push helper
+/** Sends one message to every registered device of the given users and prunes tokens FCM rejects. */
+async function pushToUsers(uids: string[], message: Omit<MulticastMessage, "tokens">): Promise<number> {
+  const owners: Record<string, string[]> = {};
+  const tokens: string[] = [];
+  for (const id of new Set(uids)) {
+    const u = (await db.doc(`users/${id}`).get()).data() as any;
+    for (const t of u?.fcmTokens ?? []) {
+      tokens.push(t);
+      (owners[id] ??= []).push(t);
+    }
+  }
+  if (tokens.length === 0) return 0;
+  const res = await getMessaging().sendEachForMulticast({ ...message, tokens });
+  const dead = new Set<string>();
+  res.responses.forEach((r, i) => {
+    const code = r.error?.code;
+    if (code === "messaging/registration-token-not-registered" || code === "messaging/invalid-registration-token") dead.add(tokens[i]);
+  });
+  for (const [id, list] of Object.entries(owners)) {
+    const bad = list.filter((t) => dead.has(t));
+    if (bad.length) await db.doc(`users/${id}`).update({ fcmTokens: FieldValue.arrayRemove(...bad) });
+  }
+  return res.successCount;
+}
+
+function clampInt(raw: unknown, min: number, max: number, fallback: number): number {
+  const n = Math.round(Number(raw));
+  return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+}
+
 // ---------------------------------------------------------------- app approvals
 export const requestAppApproval = onCall(async (req) => {
   const uid = requireAuth(req);
@@ -269,14 +348,18 @@ export const requestAppApproval = onCall(async (req) => {
   const family = famSnap.data() as any;
   const child = childSnap.data() as any;
   if (!family || !child) throw new HttpsError("not-found", "Child profile not found.");
+  if (user.role === "parent" && !(family.parentUids ?? []).includes(uid)) throw new HttpsError("permission-denied", "Not your family.");
+  if (user.role === "child" && child.linkedUid !== uid) throw new HttpsError("permission-denied", "This device is not paired with that child.");
 
   const appName = String(req.data?.appName ?? "").trim().slice(0, 100);
   const packageName = String(req.data?.packageName ?? "").trim().toLowerCase().slice(0, 150);
   if (!appName || !packageName) throw new HttpsError("invalid-argument", "appName and packageName are required.");
+  if (!/^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$/.test(packageName)) throw new HttpsError("invalid-argument", "Invalid package name.");
 
   const category = String(req.data?.category ?? "General").trim().slice(0, 50);
-  const minAgeRating = Number(req.data?.minAgeRating ?? 3);
-  const dailyLimitMinutes = Number(req.data?.dailyLimitMinutes ?? 30);
+  const minAgeRating = clampInt(req.data?.minAgeRating, 0, 18, 3);
+  const dailyLimitMinutes = clampInt(req.data?.dailyLimitMinutes, 0, 1440, 0);
+  const source = user.role === "child" ? "device_install" : "parent_added";
 
   // Compute suitability assessment based on child's age profile
   const maxAgeMap: Record<string, number> = {
@@ -291,10 +374,10 @@ export const requestAppApproval = onCall(async (req) => {
 
   if (minAgeRating > childMaxAge) {
     safetyScore = Math.max(25, 100 - (minAgeRating - childMaxAge) * 18);
-    safetyReason = `Age rating (${minAgeRating}+) exceeds recommended age bracket for ${child.name} (${String(child.ageProfile).replace(/_/g, " ")}). Requires parental approval.`;
+    safetyReason = `Age rating (${minAgeRating}+) exceeds recommended age bracket for ${child.name} (${String(child.ageProfile).replace(/_/g, " ")}). It stays blocked on ${child.name}'s phone until you approve it.`;
   } else {
     safetyScore = Math.min(98, 85 + (minAgeRating % 10));
-    safetyReason = `Age rating (${minAgeRating}+) is within the recommended bracket for ${child.name}. Requires parental sign-off before installation.`;
+    safetyReason = `Age rating (${minAgeRating}+) is within the recommended bracket for ${child.name}. It stays blocked on ${child.name}'s phone until you approve it.`;
   }
 
   const appId = `${childId}_${packageName.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
@@ -302,6 +385,13 @@ export const requestAppApproval = onCall(async (req) => {
   const existingSnap = await appRef.get();
   const existing = existingSnap.data() as any;
 
+  if (existing && existing.installed === false && user.role === "child") {
+    await appRef.update({ installed: true, uninstalledAt: null });
+    await logAppActivity(familyId, childId, child.name, "installed", packageName, appName, existing.approvalStatus);
+  }
+  if (existing && existing.approvalStatus === "PENDING_REVIEW") {
+    return { appId, approvalStatus: "PENDING_REVIEW", message: `${appName} is already waiting for a parent's decision.` };
+  }
   if (existing && existing.approvalStatus === "APPROVED") {
     return {
       appId,
@@ -324,6 +414,9 @@ export const requestAppApproval = onCall(async (req) => {
     safetyScore,
     safetyReason,
     approvalStatus: "PENDING_REVIEW",
+    source,
+    installed: true,
+    uninstalledAt: null,
     dailyLimitMinutes: existing?.dailyLimitMinutes ?? dailyLimitMinutes,
     requestedAt: FieldValue.serverTimestamp(),
     reviewedAt: null,
@@ -332,6 +425,7 @@ export const requestAppApproval = onCall(async (req) => {
   };
 
   await appRef.set(payload, { merge: true });
+  if (user.role === "child") await logAppActivity(familyId, childId, child.name, "installed", packageName, appName, "PENDING_REVIEW");
 
   return {
     appId,
@@ -340,6 +434,161 @@ export const requestAppApproval = onCall(async (req) => {
     safetyScore,
     safetyReason,
   };
+});
+
+/** The paired child's phone calling: returns its family and child, or throws. */
+async function requireChildDevice(req: CallableRequest) {
+  const uid = requireAuth(req);
+  const user = await userDoc(uid);
+  if (user.role !== "child" || !user.familyId || !user.childId) throw new HttpsError("permission-denied", "Paired child devices only.");
+  const child = (await db.doc(`families/${user.familyId}/children/${user.childId}`).get()).data() as any;
+  if (!child || child.linkedUid !== uid) throw new HttpsError("permission-denied", "This device is not paired.");
+  return { uid, familyId: user.familyId as string, childId: user.childId as string, child };
+}
+
+function cleanPackage(raw: unknown): string | null {
+  const pkg = String(raw ?? "").trim().toLowerCase().slice(0, 150);
+  return /^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$/.test(pkg) ? pkg : null;
+}
+
+const appDocId = (childId: string, pkg: string) => `${childId}_${pkg.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+
+async function logAppActivity(
+  familyId: string, childId: string, childName: string,
+  type: "installed" | "uninstalled", packageName: string, appName: string, approvalStatus: string | null,
+) {
+  await db.collection(`families/${familyId}/appActivity`).add({
+    childId, childName, type, packageName, appName, approvalStatus,
+    at: FieldValue.serverTimestamp(),
+  });
+}
+
+/**
+ * First run on a paired child's phone: records the apps already installed as allowed, so the parent sees
+ * the full list and can block any of them, without a notification per app. Never changes existing decisions.
+ */
+export const syncInstalledApps = onCall(async (req) => {
+  const { uid, familyId, childId, child } = await requireChildDevice(req);
+  const list = Array.isArray(req.data?.apps) ? req.data.apps.slice(0, 400) : [];
+  let added = 0;
+  for (let i = 0; i < list.length; i += 100) {
+    const chunk = list.slice(i, i + 100);
+    const refs = chunk.map((a: any) => cleanPackage(a?.packageName)).map((pkg: string | null) => pkg && db.doc(`families/${familyId}/apps/${appDocId(childId, pkg)}`));
+    const valid = refs.filter(Boolean) as FirebaseFirestore.DocumentReference[];
+    const snaps = valid.length ? await db.getAll(...valid) : [];
+    const exists = new Set(snaps.filter((x) => x.exists).map((x) => x.id));
+    const batch = db.batch();
+    chunk.forEach((a: any, j: number) => {
+      const ref = refs[j];
+      if (!ref || exists.has(ref.id)) return;
+      batch.set(ref, {
+        id: ref.id,
+        childId,
+        childName: child.name,
+        childLinkedUid: uid,
+        appName: String(a?.appName ?? a?.packageName).trim().slice(0, 100),
+        packageName: cleanPackage(a?.packageName),
+        category: String(a?.category ?? "General").trim().slice(0, 50),
+        approvalStatus: "APPROVED",
+        source: "existing",
+        installed: true,
+        dailyLimitMinutes: 0,
+        requestedAt: FieldValue.serverTimestamp(),
+        reviewedAt: null,
+        reviewedBy: null,
+      });
+      added++;
+    });
+    await batch.commit();
+  }
+  return { added };
+});
+
+/** The child's phone reports an uninstall; the parent is told and the app is marked as removed. */
+export const reportAppRemoved = onCall(async (req) => {
+  const { familyId, childId, child } = await requireChildDevice(req);
+  const pkg = cleanPackage(req.data?.packageName);
+  if (!pkg) throw new HttpsError("invalid-argument", "Invalid package name.");
+  const ref = db.doc(`families/${familyId}/apps/${appDocId(childId, pkg)}`);
+  const existing = (await ref.get()).data() as any;
+  const appName = String(existing?.appName ?? req.data?.appName ?? pkg).slice(0, 100);
+  if (existing?.installed === false) return { ok: true }; // already reported
+  if (existing) await ref.update({ installed: false, uninstalledAt: FieldValue.serverTimestamp() });
+  await logAppActivity(familyId, childId, child.name, "uninstalled", pkg, appName, existing?.approvalStatus ?? null);
+
+  const fam = (await db.doc(`families/${familyId}`).get()).data() as any;
+  if (fam) {
+    await pushToUsers((fam.parentUids as string[]) ?? [], {
+      notification: { title: `${appName} was uninstalled`, body: `${child.name} removed ${appName} from their phone.` },
+      data: { type: "app_activity", familyId, childId, packageName: pkg },
+      android: { priority: "high", notification: { channelId: "safety_alerts" } },
+    }).catch((e) => console.error("reportAppRemoved push failed", e));
+  }
+  return { ok: true };
+});
+
+// ---------------------------------------------------------------- screen time: protection status
+const PROTECTION_LABEL: Record<string, string> = {
+  usageAccess: "usage access",
+  overlay: "the lock screen permission (display over other apps)",
+  deviceAdmin: "device admin",
+  notifications: "notifications",
+  batteryUnrestricted: "unrestricted battery",
+};
+
+/** Tells the parent when a protection is switched off on the child's phone. */
+export const onDeviceProtectionChanged = onDocumentWritten("families/{familyId}/devices/{childId}", async (event) => {
+  const before = (event.data?.before?.data()?.permissions ?? {}) as Record<string, boolean>;
+  const after = (event.data?.after?.data()?.permissions ?? {}) as Record<string, boolean>;
+  const lost = Object.keys(PROTECTION_LABEL).filter((k) => before[k] === true && after[k] === false);
+  if (lost.length === 0) return;
+  const { familyId, childId } = event.params;
+  const [fam, child] = await Promise.all([
+    db.doc(`families/${familyId}`).get().then((x) => x.data() as any),
+    db.doc(`families/${familyId}/children/${childId}`).get().then((x) => x.data() as any),
+  ]);
+  if (!fam) return;
+  const name = child?.name || "Your child";
+  await pushToUsers((fam.parentUids as string[]) ?? [], {
+    notification: {
+      title: "Screen time protection weakened",
+      body: (() => {
+        const what = lost.map((k) => PROTECTION_LABEL[k]).join(", ");
+        const verb = lost.length > 1 ? "were" : "was";
+        return `${what.charAt(0).toUpperCase()}${what.slice(1)} ${verb} switched off on ${name}'s phone. Open K-Guard there to turn it back on.`;
+      })(),
+    },
+    data: { type: "device_protection", familyId, childId },
+    android: { priority: "high", notification: { channelId: "safety_alerts" } },
+  });
+});
+
+/**
+ * Every 30 minutes: a paired phone that has not checked in for 6 hours may be switched off, offline for a
+ * long time, or have had K-Guard removed. Tell the parent once per silence.
+ */
+export const checkSilentDevices = onSchedule("every 30 minutes", async () => {
+  const cutoff = Timestamp.fromMillis(Date.now() - 6 * 3_600_000);
+  const stale = await db.collectionGroup("devices").where("lastSyncedAt", "<", cutoff).limit(500).get();
+  for (const doc of stale.docs) {
+    const d = doc.data() as any;
+    const last: Timestamp | undefined = d.lastSyncedAt;
+    if (!last || (d.silentNotifiedFor && d.silentNotifiedFor.isEqual?.(last))) continue;
+    const familyId = doc.ref.parent.parent?.id;
+    if (!familyId) continue;
+    const fam = (await db.doc(`families/${familyId}`).get()).data() as any;
+    if (!fam) continue;
+    const name = d.childName || "Your child";
+    await pushToUsers((fam.parentUids as string[]) ?? [], {
+      notification: {
+        title: `${name}'s phone hasn't checked in`,
+        body: `K-Guard hasn't heard from ${name}'s phone for over 6 hours. It may be switched off or offline, or K-Guard may have been removed.`,
+      },
+      data: { type: "device_silent", familyId, childId: doc.id },
+      android: { priority: "high", notification: { channelId: "safety_alerts" } },
+    }).catch((e) => console.error("checkSilentDevices push failed", e));
+    await doc.ref.update({ silentNotifiedFor: last });
+  }
 });
 
 export const respondToAppApproval = onCall(async (req) => {
@@ -354,7 +603,10 @@ export const respondToAppApproval = onCall(async (req) => {
   if (decision !== "APPROVED" && decision !== "REJECTED") {
     throw new HttpsError("invalid-argument", "decision must be APPROVED or REJECTED.");
   }
-  const dailyLimitMinutes = req.data?.dailyLimitMinutes !== undefined ? Number(req.data.dailyLimitMinutes) : undefined;
+  const dailyLimitMinutes =
+    req.data?.dailyLimitMinutes === undefined || req.data?.dailyLimitMinutes === null
+      ? undefined
+      : clampInt(req.data.dailyLimitMinutes, 0, 1440, 30);
 
   const appRef = db.doc(`families/${familyId}/apps/${appId}`);
   const snap = await appRef.get();
@@ -366,36 +618,29 @@ export const respondToAppApproval = onCall(async (req) => {
     reviewedAt: FieldValue.serverTimestamp(),
     reviewedBy: uid,
   };
-  if (dailyLimitMinutes !== undefined && !Number.isNaN(dailyLimitMinutes)) {
-    updateData.dailyLimitMinutes = dailyLimitMinutes;
-  }
+  if (dailyLimitMinutes !== undefined) updateData.dailyLimitMinutes = dailyLimitMinutes;
 
   await appRef.update(updateData);
 
-  // Send push notification to the child device if linked
+  // Tell the child's device. Data-only and high priority so the app handles it even in the background:
+  // it updates its local allow-list first, then shows the notification itself.
   if (appData.childLinkedUid) {
-    const childUser = await userDoc(appData.childLinkedUid);
-    const tokens: string[] = childUser.fcmTokens ?? [];
-    if (tokens.length > 0) {
-      const isApproved = decision === "APPROVED";
-      await getMessaging().sendEachForMulticast({
-        tokens,
-        notification: {
-          title: isApproved ? `App Approved: ${appData.appName}` : `App Request Declined`,
-          body: isApproved
-            ? `Your parent approved ${appData.appName}. You can now install and use it!`
-            : `Your request to install ${appData.appName} was not approved.`,
-        },
-        data: {
-          familyId,
-          appId,
-          packageName: appData.packageName,
-          decision,
-          type: "app_approval_response",
-        },
-        android: { priority: "high", notification: { channelId: "safety_alerts" } },
-      }).catch(() => undefined);
-    }
+    const isApproved = decision === "APPROVED";
+    await pushToUsers([appData.childLinkedUid], {
+      data: {
+        type: "app_approval_response",
+        familyId,
+        appId,
+        appName: String(appData.appName ?? ""),
+        packageName: String(appData.packageName ?? ""),
+        decision,
+        title: isApproved ? `${appData.appName} approved` : `${appData.appName} not approved`,
+        body: isApproved
+          ? `Your parent approved ${appData.appName}. You can open it now.`
+          : `Your parent did not approve ${appData.appName}. It stays blocked on this device.`,
+      },
+      android: { priority: "high" },
+    }).catch((e) => console.error("respondToAppApproval push failed", e));
   }
 
   return { ok: true, appId, status: decision };
@@ -415,28 +660,16 @@ export const onAppApprovalWritten = onDocumentWritten("families/{familyId}/apps/
   const fam = famDoc.data() as any;
   if (!fam) return;
 
-  const tokens: string[] = [];
-  const owners: Record<string, string[]> = {};
-  for (const pid of (fam.parentUids as string[] ?? [])) {
-    const u = (await db.doc(`users/${pid}`).get()).data() as any;
-    for (const t of u?.fcmTokens ?? []) {
-      tokens.push(t);
-      (owners[pid] ??= []).push(t);
-    }
-  }
-  if (tokens.length === 0) return;
-
   const childName = after.childName || "Your child";
   const appName = after.appName || "an application";
   const category = after.category || "App";
   const minAge = after.minAgeRating || 0;
 
-  const title = `App Install Request: ${appName}`;
-  const body = `${childName} wants to install ${appName} (${category} • Age ${minAge}+). Tap to review.`;
-
-  const res = await getMessaging().sendEachForMulticast({
-    tokens,
-    notification: { title, body },
+  const sent = await pushToUsers((fam.parentUids as string[]) ?? [], {
+    notification: {
+      title: `App install request: ${appName}`,
+      body: `${childName} installed ${appName} (${category}, ages ${minAge}+). It stays blocked until you review it.`,
+    },
     data: {
       familyId,
       appId,
@@ -447,29 +680,10 @@ export const onAppApprovalWritten = onDocumentWritten("families/{familyId}/apps/
       type: "app_approval",
       status: "PENDING_REVIEW",
     },
-    android: {
-      priority: "high",
-      notification: {
-        channelId: "safety_alerts",
-      },
-    },
+    android: { priority: "high", notification: { channelId: "safety_alerts" } },
   });
 
-  const dead = new Set<string>();
-  res.responses.forEach((r, i) => {
-    const code = r.error?.code;
-    if (code === "messaging/registration-token-not-registered" || code === "messaging/invalid-registration-token") {
-      dead.add(tokens[i]);
-    }
-  });
-  if (dead.size) {
-    for (const [pid, list] of Object.entries(owners)) {
-      const bad = list.filter((t) => dead.has(t));
-      if (bad.length) await db.doc(`users/${pid}`).update({ fcmTokens: FieldValue.arrayRemove(...bad) });
-    }
-  }
-
-  await event.data?.after?.ref.update({ notified: res.successCount > 0 });
+  await event.data?.after?.ref.update({ notified: sent > 0 });
 });
 
 /**
@@ -539,7 +753,8 @@ export const onCommandCreated = onDocumentCreated("families/{familyId}/commands/
   });
 });
 
-function sanitiseRules(raw: unknown): Partial<Record<Category, Rule>> {  const out: Partial<Record<Category, Rule>> = {};
+function sanitiseRules(raw: unknown): Partial<Record<Category, Rule>> {
+  const out: Partial<Record<Category, Rule>> = {};
   if (!raw || typeof raw !== "object") return out;
   for (const c of CATEGORIES) {
     const v = (raw as any)[c];

@@ -20,6 +20,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.FamilyRestroom
 import androidx.compose.material.icons.filled.Image
@@ -28,12 +29,20 @@ import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -42,15 +51,24 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.tele.k_guard.data.model.AgeProfile
+import com.tele.k_guard.data.model.ChildDevice
+import com.tele.k_guard.data.model.ChildProfile
+import com.tele.k_guard.data.repository.ScreenTimeRepository
+import com.tele.k_guard.ui.components.ChildAvatar
 import com.tele.k_guard.ui.components.KGCard
 import com.tele.k_guard.ui.components.KGSectionHeader
 import com.tele.k_guard.ui.components.KGStatusTag
 import com.tele.k_guard.ui.components.KGuardLogo
 import com.tele.k_guard.ui.components.KGuardTopAppBar
+import com.tele.k_guard.ui.components.QuickActionsFab
+import com.tele.k_guard.ui.components.QuickActionsScrim
+import com.tele.k_guard.ui.components.parentQuickActions
+import com.tele.k_guard.ui.components.rememberQuickActionsState
 import com.tele.k_guard.ui.theme.KGColors
 import com.tele.k_guard.ui.theme.KGShapes
 import com.tele.k_guard.ui.theme.KGuardTheme
 import java.util.Calendar
+import kotlinx.coroutines.flow.flowOf
 
 @Composable
 fun HomeScreen(
@@ -67,9 +85,28 @@ fun HomeScreen(
     onNavigateToPrivacy: () -> Unit = {},
     onNavigateToWebProtection: () -> Unit = {},
     onNavigateToProfile: () -> Unit = {},
-    onNavigateToChildren: () -> Unit = {}
+    onNavigateToChildren: () -> Unit = {},
+    children: List<ChildProfile> = emptyList(),
+    selectedChild: ChildProfile? = null,
+    familyId: String? = null,
+    onSelectChild: (String) -> Unit = {},
+    onAddChild: () -> Unit = {}
 ) {
+    var quickActionsOpen by rememberQuickActionsState()
     Scaffold(
+        floatingActionButton = {
+            QuickActionsFab(
+                actions = parentQuickActions(
+                    pendingApprovals = pendingApprovalCount,
+                    onWebProtection = onNavigateToWebProtection,
+                    onAppApprovals = onNavigateToAppManagement,
+                    onScreenTime = onNavigateToScreenTime,
+                    onAddChild = onAddChild
+                ),
+                expanded = quickActionsOpen,
+                onExpandedChange = { quickActionsOpen = it }
+            )
+        },
         topBar = {
             KGuardTopAppBar(
                 title = "K-Guard Dashboard",
@@ -85,10 +122,10 @@ fun HomeScreen(
             )
         }
     ) { innerPadding ->
+      Box(Modifier.fillMaxSize().padding(innerPadding)) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
                 .padding(20.dp)
                 .verticalScroll(rememberScrollState())
         ) {
@@ -123,6 +160,19 @@ fun HomeScreen(
                     imageVector = Icons.Default.ChevronRight,
                     contentDescription = "Change Profile",
                     tint = KGColors.inkMuted
+                )
+            }
+
+            val heroChild = selectedChild ?: children.firstOrNull()
+            if (heroChild != null) {
+                Spacer(modifier = Modifier.height(20.dp))
+                ScreenTimeHeroCard(
+                    child = heroChild,
+                    children = children,
+                    familyId = familyId,
+                    onSelectChild = onSelectChild,
+                    onManageChildren = onNavigateToChildren,
+                    onClick = onNavigateToScreenTime
                 )
             }
 
@@ -242,7 +292,164 @@ fun HomeScreen(
                     )
                 }
             }
+            // Room for the + button so the banner isn't hidden behind it.
+            Spacer(modifier = Modifier.height(88.dp))
         }
+        QuickActionsScrim(quickActionsOpen) { quickActionsOpen = false }
+      }
+    }
+}
+
+/**
+ * The selected child's day at a glance, from what their phone last reported. Tapping opens Screen
+ * Time; the name opens a child switcher when there is more than one child. Nothing is invented: until
+ * the phone reports, the card says so.
+ */
+@Composable
+private fun ScreenTimeHeroCard(
+    child: ChildProfile,
+    children: List<ChildProfile>,
+    familyId: String?,
+    onSelectChild: (String) -> Unit,
+    onManageChildren: () -> Unit,
+    onClick: () -> Unit
+) {
+    val flow = remember(familyId, child.id) {
+        if (familyId.isNullOrBlank()) flowOf(ChildDevice()) else ScreenTimeRepository.device(familyId, child.id, child.name)
+    }
+    val collected by flow.collectAsState(initial = ChildDevice())
+    // Until the newly selected child's first snapshot arrives, don't show the previous child's numbers.
+    val device = collected.takeIf { it.childId == child.id } ?: ChildDevice()
+    var switcherOpen by remember { mutableStateOf(false) }
+
+    KGCard(modifier = Modifier.fillMaxWidth(), onClick = onClick) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            ChildAvatar(child, 44.dp)
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Box {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = if (children.size > 1) Modifier.clickable { switcherOpen = true } else Modifier
+                    ) {
+                        Text(child.name, style = MaterialTheme.typography.titleMedium)
+                        if (children.size > 1) {
+                            Icon(
+                                Icons.Default.KeyboardArrowDown,
+                                contentDescription = "Switch child",
+                                tint = KGColors.inkMuted,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                    DropdownMenu(expanded = switcherOpen, onDismissRequest = { switcherOpen = false }) {
+                        children.forEach { c ->
+                            DropdownMenuItem(
+                                text = { Text(c.name, style = MaterialTheme.typography.bodyMedium) },
+                                leadingIcon = { ChildAvatar(c, 28.dp) },
+                                onClick = {
+                                    switcherOpen = false
+                                    onSelectChild(c.id)
+                                }
+                            )
+                        }
+                        DropdownMenuItem(
+                            text = { Text("Manage children", color = KGColors.accent, style = MaterialTheme.typography.bodyMedium) },
+                            onClick = {
+                                switcherOpen = false
+                                onManageChildren()
+                            }
+                        )
+                    }
+                }
+                Text(
+                    text = listOfNotNull(
+                        device.deviceModel.ifBlank { device.deviceName }.takeIf { it.isNotBlank() },
+                        syncedText(device)
+                    ).joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = KGColors.inkMuted,
+                    maxLines = 1
+                )
+            }
+            when {
+                !device.hasReported -> KGStatusTag("Not connected", KGColors.warning)
+                device.isOnline -> KGStatusTag("Online", KGColors.success)
+                else -> KGStatusTag("Offline", KGColors.inkMuted)
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        Text("Screen time today", style = MaterialTheme.typography.labelMedium, color = KGColors.inkMuted)
+
+        if (!device.hasReported) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                "${child.name}'s phone hasn't reported yet. Screen time shows here once K-Guard is set up on it.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = KGColors.inkMuted
+            )
+            return@KGCard
+        }
+
+        val limit = device.effectiveLimitMinutes
+        Text(
+            ScreenTimeRepository.formatDuration(device.usedScreenTimeMinutes),
+            style = MaterialTheme.typography.displaySmall,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        if (limit > 0) {
+            Spacer(modifier = Modifier.height(8.dp))
+            LinearProgressIndicator(
+                progress = { device.usageProgress },
+                color = if (device.isLocked) KGColors.danger else KGColors.accent,
+                trackColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+        Row(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                if (limit > 0) "${ScreenTimeRepository.formatDuration(device.remainingMinutes)} left" else "No daily limit",
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.weight(1f)
+            )
+            if (limit > 0) {
+                Text(
+                    "of ${ScreenTimeRepository.formatDuration(limit)} today",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = KGColors.inkMuted
+                )
+            }
+        }
+
+        val status = listOfNotNull(
+            if (device.isLocked) device.lockReason?.takeIf { it.isNotBlank() } ?: device.lockState.label else null,
+            if (device.bedtimeEnabled) "Bedtime ${device.bedtimeStart}–${device.bedtimeEnd}" else null,
+            if (device.schoolEnabled) "School hours ${device.schoolStart}–${device.schoolEnd}" else null
+        )
+        if (status.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                status.joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall,
+                color = if (device.isLocked) KGColors.danger else KGColors.inkMuted
+            )
+        }
+    }
+}
+
+private fun syncedText(device: ChildDevice): String {
+    if (!device.hasReported) return "Not reported yet"
+    val mins = device.lastSeenMinutesAgo
+    return when {
+        mins < 0 -> "Synced"
+        mins < 1 -> "Synced just now"
+        mins < 60 -> "Synced $mins min ago"
+        mins < 24 * 60 -> "Synced ${mins / 60}h ago"
+        else -> "Synced ${mins / (24 * 60)}d ago"
     }
 }
 
@@ -312,6 +519,8 @@ fun HomeScreenPreview() {
         HomeScreen(
             activeAgeProfile = AgeProfile.PRETEENS_8_12,
             activeChildName = "Ama",
+            children = listOf(ChildProfile(id = "1", name = "Ama"), ChildProfile(id = "2", name = "Kofi")),
+            selectedChild = ChildProfile(id = "1", name = "Ama"),
             openAlertCount = 2,
             pendingApprovalCount = 1,
             onNavigateToTextModeration = {},

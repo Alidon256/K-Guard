@@ -16,11 +16,19 @@ import com.tele.k_guard.protection.DeviceProtection
 class BootReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
+        if (intent.action !in RESTART_ACTIONS) return
         if (VpnConfigStore(context).load().enabled) {
             ContextCompat.startForegroundService(context, Intent(context, KGuardVpnService::class.java))
         }
-        DeviceProtection.assertProtections(context)
+        DeviceProtection.assertProtections(context) // also restarts the child's enforcement engine
         DeviceProtection.scheduleWatchdog(context)
+    }
+
+    private companion object {
+        val RESTART_ACTIONS = setOf(
+            Intent.ACTION_BOOT_COMPLETED,
+            "android.intent.action.QUICKBOOT_POWERON",
+            Intent.ACTION_MY_PACKAGE_REPLACED
+        )
     }
 }

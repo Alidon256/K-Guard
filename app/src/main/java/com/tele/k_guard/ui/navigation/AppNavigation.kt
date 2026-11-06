@@ -16,6 +16,7 @@ import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.tele.k_guard.data.model.AppApprovalStatus
@@ -86,8 +87,9 @@ fun AppNavigation(
     val screenTimeViewModel: ScreenTimeViewModel = viewModel()
     val appManagementViewModel: AppManagementViewModel = viewModel()
 
-    LaunchedEffect(familyId, activeChildId) {
-        appManagementViewModel.setFamilyAndChild(familyId, activeChildId)
+    // Every child's apps: the App Management screen filters by child on screen, and the pending badge counts all.
+    LaunchedEffect(familyId) {
+        appManagementViewModel.setFamilyAndChild(familyId, null)
     }
 
     val managedApps by appManagementViewModel.managedApps.collectAsState()
@@ -103,13 +105,32 @@ fun AppNavigation(
         }
     }
 
+    // A child's phone may only reach the child screens; anything else (parent dashboard, rules, approvals)
+    // sends it back to its own dashboard. Child phones are the anonymous identities created at pairing.
+    val isChildIdentity by session.isChildDevice.collectAsState()
+    val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
+    LaunchedEffect(signedIn, isChildIdentity, currentRoute) {
+        if (!signedIn || !isChildIdentity || currentRoute == null) return@LaunchedEffect
+        val childRoutes = setOf(
+            Screen.Onboarding.route, Screen.SignIn.route, Screen.ChildPinSetup.route,
+            Screen.UninstallProtection.route, Screen.ChildDashboard.route, Screen.Profile.route
+        )
+        if (currentRoute !in childRoutes) {
+            val target = if (parentPinHash.isNullOrBlank()) Screen.ChildPinSetup.route else Screen.ChildDashboard.route
+            navController.navigate(target) { popUpTo(0) }
+        }
+    }
+
     // Handle deep navigation from FCM push notifications. targetRouteId lets repeat taps of the
     // same route re-fire this effect; the route is consumed after navigating.
     LaunchedEffect(targetRoute, targetRouteId, signedIn) {
         if (signedIn && targetRoute != null) {
-            when (targetRoute) {
+            // Parent screens only; the child guard above keeps child phones on their own screens.
+            if (!isChildIdentity) when (targetRoute) {
                 "app_management" -> navController.navigate(Screen.AppManagement.route) { launchSingleTop = true }
                 "review_queue" -> navController.navigate(Screen.ReviewQueue.route) { launchSingleTop = true }
+                "screen_time" -> navController.navigate(Screen.ScreenTime.route) { launchSingleTop = true }
+                "web_protection" -> navController.navigate(Screen.WebProtection.route) { launchSingleTop = true }
             }
             onTargetRouteConsumed()
         }
@@ -180,7 +201,10 @@ fun AppNavigation(
         composable(Screen.ChildDashboard.route) {
             ChildDashboardScreen(
                 childProfile = selectedChild,
-                onNavigateToProfile = { navController.navigate(Screen.Profile.route) }
+                familyId = familyId,
+                onNavigateToProfile = { navController.navigate(Screen.Profile.route) },
+                // Pairing is the code step on the sign-in screen; this device keeps its anonymous identity.
+                onPairDevice = { navController.navigate(Screen.SignIn.route) }
             )
         }
 
@@ -221,7 +245,12 @@ fun AppNavigation(
                 onNavigateToPrivacy = { navController.navigate(Screen.Privacy.route) },
                 onNavigateToWebProtection = { navController.navigate(Screen.WebProtection.route) },
                 onNavigateToProfile = { navController.navigate(Screen.Profile.route) },
-                onNavigateToChildren = { navController.navigate(Screen.Children.route) }
+                onNavigateToChildren = { navController.navigate(Screen.Children.route) },
+                children = children,
+                selectedChild = selectedChild,
+                familyId = familyId,
+                onSelectChild = { session.selectChild(it) },
+                onAddChild = { navController.navigate(Screen.ChildEditor.create(null)) }
             )
         }
 
@@ -270,7 +299,8 @@ fun AppNavigation(
                 session = session,
                 activeAgeProfile = activeAgeProfile,
                 onNavigateBack = { navController.popBackStack() },
-                onNavigateToChildren = { navController.navigate(Screen.Children.route) }
+                onNavigateToChildren = { navController.navigate(Screen.Children.route) },
+                onNavigateToChildProfile = { navController.navigate(Screen.ChildEditor.create(it)) }
             )
         }
 

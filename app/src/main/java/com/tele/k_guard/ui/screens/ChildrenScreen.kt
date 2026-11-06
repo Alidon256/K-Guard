@@ -1,8 +1,9 @@
 package com.tele.k_guard.ui.screens
 
-import android.content.Context
-import android.net.Uri
+import com.tele.k_guard.ui.components.ChildAvatar
+
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -62,6 +63,8 @@ import com.tele.k_guard.data.model.AgeProfile
 import com.tele.k_guard.data.model.CategoryRule
 import com.tele.k_guard.data.model.ChildProfile
 import com.tele.k_guard.data.model.SafetyCategory
+import com.tele.k_guard.data.repository.ChildPhotoRepository
+import com.tele.k_guard.data.repository.ScreenTimeRepository
 import com.tele.k_guard.service.KGuardMessagingService
 import com.tele.k_guard.ui.components.KGCard
 import com.tele.k_guard.ui.components.KGDangerButton
@@ -73,15 +76,13 @@ import com.tele.k_guard.ui.components.KGStatusTag
 import com.tele.k_guard.ui.components.KGTextField
 import com.tele.k_guard.ui.components.KGToggleRow
 import com.tele.k_guard.ui.components.KGuardTopAppBar
+import com.tele.k_guard.ui.components.PhoneLockDialog
 import com.tele.k_guard.ui.theme.KGColors
 import com.tele.k_guard.ui.theme.KGShapes
 import com.tele.k_guard.ui.theme.KGuardTheme
 import com.tele.k_guard.viewmodel.SessionViewModel
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.io.File
-import java.util.UUID
 
 /** Lists child profiles; the selected one drives which age rules apply in the checkers. */
 @Composable
@@ -113,6 +114,10 @@ fun ChildrenContent(
     onEditChild: (String?) -> Unit,
     onNavigateBack: () -> Unit
 ) {
+    val scope = rememberCoroutineScope()
+    var lockDialogFor by remember { mutableStateOf<ChildProfile?>(null) }
+    var lockError by remember { mutableStateOf<String?>(null) }
+
     Scaffold(
         topBar = { KGuardTopAppBar("Children & Protection", canNavigateBack = true, onNavigateBack = onNavigateBack) },
         floatingActionButton = {
@@ -142,11 +147,39 @@ fun ChildrenContent(
                 contentPadding = PaddingValues(16.dp, 16.dp, 16.dp, 96.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                lockError?.let { msg ->
+                    item(key = "lock-error") {
+                        Text(msg, color = KGColors.danger, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
                 items(children, key = { it.id }) { child ->
                     val isSelected = child.id == selected?.id
+                    // Only a paired phone can be locked; its real lock state streams from Firestore.
+                    val fid = familyId
+                    val phoneLocked = if (fid != null && child.linkedUid != null) {
+                        val device by remember(fid, child.id) {
+                            ScreenTimeRepository.device(fid, child.id, child.name)
+                        }.collectAsState(initial = null)
+                        device?.screenLock?.isLocked ?: false
+                    } else null
                     ChildRowCard(
                         child = child,
                         isSelected = isSelected,
+                        phoneLocked = phoneLocked,
+                        onPhoneLockChange = { lock ->
+                            if (fid == null) return@ChildRowCard
+                            if (lock) lockDialogFor = child
+                            else scope.launch {
+                                lockError = null
+                                try {
+                                    ScreenTimeRepository.unlock(fid, child.id, child.name, 0)
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    lockError = "Couldn't unlock ${child.name}'s phone: ${e.message ?: "please try again."}"
+                                }
+                            }
+                        },
                         onClick = {
                             // Selecting the child keeps it active in the checkers; the row then
                             // opens its editor, replacing the old separate Edit affordance.
@@ -158,12 +191,38 @@ fun ChildrenContent(
             }
         }
     }
+
+    lockDialogFor?.let { child ->
+        PhoneLockDialog(
+            childName = child.name,
+            onDismiss = { lockDialogFor = null },
+            onConfirm = { startsIn, duration ->
+                lockDialogFor = null
+                val fid = familyId ?: return@PhoneLockDialog
+                scope.launch {
+                    lockError = null
+                    try {
+                        ScreenTimeRepository.lock(
+                            fid, child.id, child.name, "Your parent has locked this phone.",
+                            duration, startsIn.takeIf { it > 0 }
+                        )
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        lockError = "Couldn't lock ${child.name}'s phone: ${e.message ?: "please try again."}"
+                    }
+                }
+            }
+        )
+    }
 }
 
 @Composable
 private fun ChildRowCard(
     child: ChildProfile,
     isSelected: Boolean,
+    phoneLocked: Boolean?,
+    onPhoneLockChange: (Boolean) -> Unit,
     onClick: () -> Unit
 ) {
     KGCard(modifier = Modifier.fillMaxWidth(), onClick = onClick) {
@@ -188,31 +247,15 @@ private fun ChildRowCard(
                 }
             }
         }
-    }
-}
-
-/** Circular child photo: the picked image when present, otherwise the initial letter on a surface disc. */
-@Composable
-private fun ChildAvatar(child: ChildProfile, size: androidx.compose.ui.unit.Dp) {
-    if (child.photoUrl.isNotBlank()) {
-        AsyncImage(
-            model = child.photoUrl,
-            contentDescription = null,
-            modifier = Modifier.size(size).clip(KGShapes.circle),
-            contentScale = ContentScale.Crop
-        )
-    } else {
-        Box(
-            modifier = Modifier
-                .size(size)
-                .clip(KGShapes.circle)
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                child.name.firstOrNull()?.uppercase() ?: "•",
-                style = if (size >= 96.dp) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.titleLarge,
-                color = KGColors.inkMuted
+        // null = phone not paired, so there's nothing to lock.
+        if (phoneLocked != null) {
+            Spacer(Modifier.height(4.dp))
+            KGToggleRow(
+                title = "Lock phone",
+                description = if (phoneLocked) "Locked. Turn off to unlock ${child.name}'s phone."
+                else "Lock ${child.name}'s phone now or later.",
+                checked = phoneLocked,
+                onCheckedChange = onPhoneLockChange
             )
         }
     }
@@ -239,8 +282,8 @@ fun ChildEditorScreen(
         pairingCode = pairingCode,
         onGenerateCode = { id -> session.createPairingCode(id) },
         onClearCode = { session.clearPairingCode() },
-        onSaveChild = { updatedChild ->
-            session.saveChild(updatedChild, onDone = onNavigateBack)
+        onSaveChild = { updatedChild, newPhoto ->
+            session.saveChild(updatedChild, newPhoto, onDone = onNavigateBack)
         },
         onDeleteChild = { id ->
             session.deleteChild(id, onNavigateBack)
@@ -258,7 +301,8 @@ fun ChildEditorContent(
     pairingCode: String? = null,
     onGenerateCode: (String) -> Unit = {},
     onClearCode: () -> Unit = {},
-    onSaveChild: (ChildProfile) -> Unit,
+    /** The profile plus a freshly picked photo (prepared JPEG bytes, uploaded on save), if any. */
+    onSaveChild: (ChildProfile, ByteArray?) -> Unit,
     onDeleteChild: (String) -> Unit,
     onNavigateBack: () -> Unit
 ) {
@@ -282,7 +326,10 @@ fun ChildEditorContent(
 
     val scope = rememberCoroutineScope()
     var name by remember(existing?.id) { mutableStateOf(existing?.name ?: "") }
-    var photoUrl by remember(existing?.id) { mutableStateOf(existing?.photoUrl ?: "") }
+    val photoUrl = existing?.photoUrl ?: ""
+    var newPhoto by remember(existing?.id) { mutableStateOf<ByteArray?>(null) }
+    var preparingPhoto by remember { mutableStateOf(false) }
+    var photoError by remember { mutableStateOf<String?>(null) }
     var ageId by remember(existing?.id) { mutableStateOf(existing?.ageProfile ?: AgeProfile.PRETEENS_8_12.id) }
     var rules by remember(existing?.id) { mutableStateOf(existing?.categoryRules ?: emptyMap()) }
     var allowReveal by remember(existing?.id) { mutableStateOf(existing?.allowReveal ?: false) }
@@ -290,13 +337,22 @@ fun ChildEditorContent(
     val age = AgeProfile.fromId(ageId)
     val revealAllowed = age == AgeProfile.TEENS_13_17 || age == AgeProfile.ADULTS_18_PLUS
 
-    val imagePicker = rememberLauncherFilePicker { uri ->
+    // Android's photo picker (no storage permission). The photo is squared/resized now, shown as a
+    // preview, and uploaded on Save so it appears on every phone in the family.
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) {
-            // The picker's content:// URI is transient; copy the bytes into app-private storage so
-            // the photo still shows after a restart. Fall back to the raw URI if the copy fails.
             scope.launch {
-                val stored = copyPickedPhoto(context, uri)
-                photoUrl = stored ?: uri.toString()
+                preparingPhoto = true
+                photoError = null
+                try {
+                    newPhoto = ChildPhotoRepository.prepare(context, uri)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    photoError = "That photo couldn't be used. Try another one."
+                } finally {
+                    preparingPhoto = false
+                }
             }
         }
     }
@@ -320,12 +376,16 @@ fun ChildEditorContent(
                         .size(96.dp)
                         .clip(KGShapes.circle)
                         .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                        .clickable { imagePicker.launch("image/*") },
+                        .clickable(enabled = !preparingPhoto) {
+                            imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                        },
                     contentAlignment = Alignment.Center
                 ) {
-                    if (photoUrl.isNotBlank()) {
+                    if (preparingPhoto) {
+                        CircularProgressIndicator(Modifier.size(32.dp))
+                    } else if (newPhoto != null || photoUrl.isNotBlank()) {
                         AsyncImage(
-                            model = photoUrl,
+                            model = newPhoto ?: photoUrl,
                             contentDescription = "Child Avatar",
                             modifier = Modifier.fillMaxSize().clip(KGShapes.circle),
                             contentScale = ContentScale.Crop
@@ -341,12 +401,25 @@ fun ChildEditorContent(
                 }
             }
             Text(
-                "Tap to pick photo from device",
+                when {
+                    preparingPhoto -> "Preparing photo…"
+                    newPhoto != null -> "New photo · saved when you tap Save"
+                    else -> "Tap to pick photo from device"
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = KGColors.inkMuted,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
             )
+            photoError?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = KGColors.danger,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                )
+            }
 
             // -------------------------------------------------------------- Name
             KGSectionHeader("Name", hint = "How this child appears across K-Guard.")
@@ -497,10 +570,11 @@ fun ChildEditorContent(
                         (existing ?: ChildProfile()).copy(
                             name = name, email = existing?.email ?: "", photoUrl = photoUrl, ageProfile = ageId, categoryRules = rules,
                             allowReveal = allowReveal && (age == AgeProfile.TEENS_13_17 || age == AgeProfile.ADULTS_18_PLUS)
-                        )
+                        ),
+                        newPhoto
                     )
                 },
-                enabled = name.isNotBlank() && !busy,
+                enabled = name.isNotBlank() && !busy && !preparingPhoto,
                 modifier = Modifier.fillMaxWidth()
             )
 
@@ -567,36 +641,6 @@ fun ChildEditorContent(
     }
 }
 
-/**
- * Copies a gallery image into app-private storage (filesDir/child_photos) so the child photo
- * survives restarts and permission revocation of the source provider. Returns a file URI string,
- * or null when the copy fails (caller falls back to the original URI).
- * Note: this persists only on this device; syncing the photo across devices still needs an upload.
- */
-private suspend fun copyPickedPhoto(context: Context, uri: Uri): String? = withContext(Dispatchers.IO) {
-    try {
-        val dir = File(context.filesDir, "child_photos").apply { mkdirs() }
-        val file = File(dir, "${UUID.randomUUID()}.jpg")
-        context.contentResolver.openInputStream(uri)?.use { input ->
-            file.outputStream().use { output -> input.copyTo(output) }
-        } ?: return@withContext null
-        Uri.fromFile(file).toString()
-    } catch (e: Exception) {
-        null
-    }
-}
-
-@Composable
-fun rememberLauncherFilePicker(onImageSelected: (Uri?) -> Unit) =
-    rememberLauncherFilePickerInternal(onImageSelected)
-
-@Composable
-private fun rememberLauncherFilePickerInternal(onImageSelected: (Uri?) -> Unit) =
-    rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent(),
-        onResult = onImageSelected
-    )
-
 @Preview(showBackground = true)
 @Composable
 fun ChildrenScreenPreview() {
@@ -622,7 +666,7 @@ fun ChildEditorScreenPreview() {
             existing = child,
             busy = false,
             error = null,
-            onSaveChild = {},
+            onSaveChild = { _, _ -> },
             onDeleteChild = {},
             onNavigateBack = {}
         )

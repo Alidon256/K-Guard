@@ -3,6 +3,9 @@ package com.tele.k_guard.receiver
 import android.app.admin.DeviceAdminReceiver
 import android.content.Context
 import android.content.Intent
+import android.app.admin.DevicePolicyManager
+import com.tele.k_guard.protection.DeviceProtection
+import com.tele.k_guard.service.KGuardCompanionService
 import com.tele.k_guard.service.KGuardMessagingService
 
 /**
@@ -20,6 +23,7 @@ class KGuardDeviceAdminReceiver : DeviceAdminReceiver() {
             "Uninstall protection is on",
             "K-Guard can no longer be removed from this device, and remote lock is active."
         )
+        KGuardCompanionService.requestSync(context)
     }
 
     /**
@@ -44,5 +48,21 @@ class KGuardDeviceAdminReceiver : DeviceAdminReceiver() {
             "K-Guard protection was turned off",
             "This app can now be removed and remote lock no longer works. Open K-Guard to turn protection back on."
         )
+        // Report straight away; the server tells the parent (see onDeviceProtectionChanged).
+        KGuardCompanionService.requestSync(context)
+    }
+
+    companion object {
+        fun isAdminActive(context: Context): Boolean = DeviceProtection.isAdminActive(context)
+
+        /** Switches the screen off via DevicePolicyManager.lockNow(); false when admin is not active. */
+        fun lockScreenNow(context: Context): Boolean {
+            if (!isAdminActive(context)) return false
+            val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager ?: return false
+            return runCatching { dpm.lockNow() }.isSuccess
+        }
+
+        /** Start from an Activity: Android refuses ADD_DEVICE_ADMIN as a new task. */
+        fun createAdminRequestIntent(context: Context): Intent = DeviceProtection.activationIntent(context)
     }
 }

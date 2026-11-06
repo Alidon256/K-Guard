@@ -25,6 +25,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.google.firebase.auth.FirebaseUser
 import com.tele.k_guard.data.model.ChildProfile
+import com.tele.k_guard.ui.components.ChildAvatar
 import com.tele.k_guard.ui.components.KGCard
 import com.tele.k_guard.ui.components.KGDangerButton
 import com.tele.k_guard.ui.components.KGStatusTag
@@ -43,15 +44,14 @@ fun ProfileScreen(
 ) {
     val user by session.user.collectAsState()
     val selectedChild by session.selectedChild.collectAsState()
+    val children by session.children.collectAsState()
 
     ProfileContent(
         user = user,
-        selectedChild = selectedChild,
+        // On a child phone `children` holds only this child's own profile.
+        selectedChild = selectedChild ?: children.firstOrNull(),
         isChildDevice = isChildDevice,
-        onSignOut = {
-            session.signOut()
-            onSignOut()
-        },
+        onSignOut = { session.signOut(onDone = onSignOut) },
         onNavigateBack = onNavigateBack
     )
 }
@@ -91,7 +91,14 @@ fun ProfileContent(
             // Identity header: logo, display name, role chip.
             KGCard(modifier = Modifier.fillMaxWidth()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    KGuardLogo(modifier = Modifier.size(56.dp))
+                    // Parent: their Google photo; child phone: the photo the parent uploaded. Initial otherwise.
+                    if (isChildDevice && selectedChild != null) {
+                        ChildAvatar(child = selectedChild, size = 56.dp)
+                    } else if (!isChildDevice && user != null) {
+                        ChildAvatar(name = displayName, photoUrl = user.photoUrl?.toString() ?: "", size = 56.dp)
+                    } else {
+                        KGuardLogo(modifier = Modifier.size(56.dp))
+                    }
                     Spacer(modifier = Modifier.width(16.dp))
                     Column {
                         Text(

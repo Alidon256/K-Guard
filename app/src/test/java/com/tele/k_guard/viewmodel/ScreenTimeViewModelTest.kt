@@ -1,7 +1,7 @@
 package com.tele.k_guard.viewmodel
 
 import com.tele.k_guard.data.model.ChildDevice
-import com.tele.k_guard.data.repository.ParentalControlsRepository
+import com.tele.k_guard.data.repository.ScreenTimeRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import org.junit.Assert.assertEquals
@@ -19,7 +19,7 @@ import org.junit.Test
 class ScreenTimeViewModelTest {
 
     private lateinit var viewModel: ScreenTimeViewModel
-    private val repository = ParentalControlsRepository
+    private val repository = ScreenTimeRepository
     private val testScope = CoroutineScope(Dispatchers.Unconfined)
 
     @Before

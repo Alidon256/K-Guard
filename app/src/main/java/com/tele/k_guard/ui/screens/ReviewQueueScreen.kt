@@ -1,6 +1,8 @@
 package com.tele.k_guard.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,8 +16,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FactCheck
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -27,11 +32,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.tele.k_guard.data.model.ChildProfile
 import com.tele.k_guard.data.model.ParentAction
 import com.tele.k_guard.data.model.SafetyEvent
+import com.tele.k_guard.ui.components.ChildAvatar
 import com.tele.k_guard.ui.components.DecisionBadge
 import com.tele.k_guard.ui.components.KGCard
 import com.tele.k_guard.ui.components.KGDangerButton
@@ -74,6 +81,8 @@ fun ReviewQueueContent(
     // Filters and the in-progress review survive rotation (rememberSaveable, not remember).
     var onlyOpen by rememberSaveable { mutableStateOf(true) }
     var childFilter by rememberSaveable { mutableStateOf<String?>(null) }
+    // Non-null while the top-bar search field is open.
+    var searchQuery by rememberSaveable { mutableStateOf<String?>(null) }
     // The pending action is stored as plain ids so it survives configuration changes;
     // the SafetyEvent itself is resolved from the live list.
     var pendingEventId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -92,20 +101,49 @@ fun ReviewQueueContent(
         event to action
     }
 
-    val shown = events.filter { (!onlyOpen || it.isOpen) && (childFilter == null || it.childId == childFilter) }
+    val q = searchQuery.orEmpty().trim()
+    // Child + search scope; the chip counts reflect it, the status chip then narrows it.
+    val searched = events.filter { ev ->
+        (childFilter == null || ev.childId == childFilter) &&
+            (q.isEmpty() || listOfNotNull(ev.childName, ev.category, ev.explanation, ev.snippet).any { it.contains(q, ignoreCase = true) })
+    }
+    val shown = searched.filter { !onlyOpen || it.isOpen }
 
-    Scaffold(topBar = { KGuardTopAppBar("Alerts & Review", canNavigateBack = true, onNavigateBack = onNavigateBack) }) { padding ->
+    Scaffold(topBar = {
+        KGuardTopAppBar(
+            "Alerts & Review",
+            canNavigateBack = true,
+            onNavigateBack = onNavigateBack,
+            searchQuery = searchQuery,
+            onSearchQueryChange = { searchQuery = it },
+            onSearchClose = { searchQuery = null },
+            searchPlaceholder = "Search alerts",
+            actions = {
+                IconButton(onClick = { searchQuery = "" }) {
+                    Icon(Icons.Default.Search, contentDescription = "Search alerts")
+                }
+            }
+        )
+    }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
             Spacer(Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = onlyOpen, onClick = { onlyOpen = true }, label = { Text("Needs review") })
-                FilterChip(selected = !onlyOpen, onClick = { onlyOpen = false }, label = { Text("All") })
+                FilterChip(selected = onlyOpen, onClick = { onlyOpen = true }, label = { Text("Needs review (${searched.count { it.isOpen }})") })
+                FilterChip(selected = !onlyOpen, onClick = { onlyOpen = false }, label = { Text("All (${searched.size})") })
             }
             if (children.size > 1) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 4.dp)) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(top = 4.dp).horizontalScroll(rememberScrollState())
+                ) {
                     FilterChip(selected = childFilter == null, onClick = { childFilter = null }, label = { Text("Everyone") })
                     children.forEach { c ->
-                        FilterChip(selected = childFilter == c.id, onClick = { childFilter = c.id }, label = { Text(c.name) })
+                        FilterChip(
+                            selected = childFilter == c.id,
+                             onClick = { childFilter = c.id },
+                            label = { Text(c.name) },
+                            leadingIcon = { ChildAvatar(c, 20.dp) }
+                        )
                     }
                 }
             }
@@ -116,8 +154,16 @@ fun ReviewQueueContent(
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     KGEmptyState(
                         icon = Icons.Default.FactCheck,
-                        title = if (onlyOpen) "Nothing to review" else "No alerts yet",
-                        description = if (onlyOpen) "Nothing needs your review right now." else "No safety events recorded yet."
+                        title = when {
+                            q.isNotEmpty() -> "No matches"
+                            onlyOpen -> "Nothing to review"
+                            else -> "No alerts yet"
+                        },
+                        description = when {
+                            q.isNotEmpty() -> "No alerts match \"$q\"."
+                            onlyOpen -> "Nothing needs your review right now."
+                            else -> "No safety events recorded yet."
+                        }
                     )
                 }
             } else {
@@ -158,6 +204,8 @@ fun ReviewQueueContent(
 
 @Composable
 private fun EventCard(ev: SafetyEvent, onAction: (ParentAction) -> Unit) {
+    // Snippets are hidden until the parent chooses to read them.
+    var revealed by rememberSaveable(ev.id) { mutableStateOf(false) }
     KGCard(modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -174,8 +222,16 @@ private fun EventCard(ev: SafetyEvent, onAction: (ParentAction) -> Unit) {
         ev.snippet?.let {
             Spacer(Modifier.height(8.dp))
             Box(Modifier.fillMaxWidth().background(KGColors.hairline, KGShapes.cardSmall).padding(8.dp)) {
-                Text("“$it”", style = MaterialTheme.typography.bodySmall)
+                Text(
+                    "“$it”",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = if (revealed) Modifier else Modifier.blur(6.dp)
+                )
             }
+            KGTextLink(
+                text = if (revealed) "Hide snippet" else "Reveal snippet",
+                onClick = { revealed = !revealed }
+            )
         }
         ev.createdAt?.let {
             Text(

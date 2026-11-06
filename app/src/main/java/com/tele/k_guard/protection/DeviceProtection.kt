@@ -11,7 +11,7 @@ import android.os.Build
 import com.tele.k_guard.data.repository.UserPreferencesRepository
 import com.tele.k_guard.receiver.KGuardDeviceAdminReceiver
 import com.tele.k_guard.service.KGuardMessagingService
-import com.tele.k_guard.ui.screens.DeviceLockActivity
+import com.tele.k_guard.service.KGuardCompanionService
 import com.tele.k_guard.vpn.KGuardVpnService
 import com.tele.k_guard.vpn.VpnConfigStore
 import com.tele.k_guard.vpn.VpnState
@@ -85,6 +85,9 @@ object DeviceProtection {
             runBlocking { UserPreferencesRepository(context).isChildDeviceFlow.first() }
         }.getOrDefault(false)
         if (!isChild) return
+
+        // Screen time engine: locks, schedules and limits stop if this service is killed.
+        if (!KGuardCompanionService.isRunning) KGuardCompanionService.startCompanionService(context)
 
         // VPN: if the parent left protection on but the service is not running, bring it back.
         if (VpnConfigStore(context).load().enabled && !VpnState.running.value) {
