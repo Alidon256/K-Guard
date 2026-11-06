@@ -1,1 +1,9 @@
-# Add domains for this category, one per line.
+# Drugs, cannabis retail and vaping brands aimed at buying or using.
+weedmaps.com
+leafly.com
+dutchie.com
+eaze.com
+hightimes.com
+juul.com
+elfbar.com
+vuse.com

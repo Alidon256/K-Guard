@@ -5,31 +5,38 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tele.k_guard.data.model.AgeProfile
 import com.tele.k_guard.data.model.ChildDevice
-import com.tele.k_guard.data.model.RemoteAction
+import com.tele.k_guard.data.model.DeviceLockState
 import com.tele.k_guard.data.model.RemoteCommand
 import com.tele.k_guard.data.model.ScreenTimeConfig
-import com.tele.k_guard.data.repository.ParentalControlsRepository
+import com.tele.k_guard.data.repository.AppActivity
+import com.tele.k_guard.data.repository.ScreenTimeRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /** A one-shot UI feedback event. The id lets identical consecutive messages re-trigger snackbars. */
 data class ScreenTimeFeedback(val id: Long, val message: String)
 
+/**
+ * Parent's phone: one child's screen time and device controls. Every action writes rules to Firestore
+ * (see [ScreenTimeRepository]); the child's phone applies them and reports back, and [currentDevice] shows
+ * what the phone actually reports.
+ */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ScreenTimeViewModel(
-    private val repository: ParentalControlsRepository = ParentalControlsRepository,
-    /**
-     * Optional external scope for the stateIn/launched coroutines. Falls back to [viewModelScope]
-     * when null. Exists so unit tests can drive the ViewModel on a synchronous test dispatcher.
-     */
+    private val repository: ScreenTimeRepository = ScreenTimeRepository,
+    /** Optional scope so unit tests can drive the ViewModel on a synchronous dispatcher; defaults to [viewModelScope]. */
     private val externalScope: CoroutineScope? = null
 ) : ViewModel() {
 
@@ -44,45 +51,34 @@ class ScreenTimeViewModel(
 
     private val _actionFeedback = MutableStateFlow<ScreenTimeFeedback?>(null)
     val actionFeedback: StateFlow<ScreenTimeFeedback?> = _actionFeedback.asStateFlow()
-
     private var nextFeedbackId = 0L
+
+    private val _busy = MutableStateFlow(false)
+    val busy: StateFlow<Boolean> = _busy.asStateFlow()
+
+    private fun noDevice(cid: String = "", name: String = "") =
+        ChildDevice(childId = cid, childName = name, deviceName = "No device yet")
+
+    val currentDevice: StateFlow<ChildDevice> = combine(_familyId, _selectedChildId, _selectedChildName) { f, c, n -> Triple(f, c, n) }
+        .flatMapLatest { (fid, cid, name) ->
+            // No family or child yet: an explicitly offline device, never fabricated telemetry.
+            if (fid == null || cid.isBlank()) flowOf(noDevice(cid, name)) else repository.device(fid, cid, name)
+        }
+        .stateIn(scope, SharingStarted.Eagerly, noDevice())
+
+    val commandHistory: StateFlow<List<RemoteCommand>> = combine(_familyId, _selectedChildId) { f, c -> f to c }
+        .flatMapLatest { (fid, cid) -> if (fid == null || cid.isBlank()) flowOf(emptyList()) else repository.commands(fid, cid) }
+        .stateIn(scope, SharingStarted.Eagerly, emptyList())
+
+    val appActivity: StateFlow<List<AppActivity>> = combine(_familyId, _selectedChildId) { f, c -> f to c }
+        .flatMapLatest { (fid, cid) -> if (fid == null || cid.isBlank()) flowOf(emptyList()) else repository.appActivity(fid, cid) }
+        .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     fun setFamilyAndChild(familyId: String?, childId: String, childName: String) {
         _familyId.value = familyId
         _selectedChildId.value = childId
         _selectedChildName.value = childName
     }
-
-    val currentDevice: StateFlow<ChildDevice> = kotlinx.coroutines.flow.combine(
-        _familyId,
-        _selectedChildId,
-        _selectedChildName
-    ) { fid, cid, cname -> Triple(fid, cid, cname) }
-        .flatMapLatest { (fid, cid, cname) ->
-            // No family yet: an explicitly offline device, never fabricated telemetry.
-            if (fid == null) kotlinx.coroutines.flow.flowOf(
-                ChildDevice(childId = cid, childName = cname, deviceName = "No device yet", isOnline = false, batteryPercent = 0, networkName = "Not connected")
-            )
-            else repository.deviceStream(fid, cid, cname)
-        }
-        .stateIn(
-            scope,
-            SharingStarted.Eagerly,
-            ChildDevice(childId = "", childName = "", deviceName = "No device yet", isOnline = false, batteryPercent = 0, networkName = "Not connected")
-        )
-
-    val commandHistory: StateFlow<List<RemoteCommand>> = kotlinx.coroutines.flow.combine(
-        _familyId,
-        _selectedChildId
-    ) { fid, cid -> fid to cid }
-        .flatMapLatest { (fid, cid) ->
-            if (fid == null) kotlinx.coroutines.flow.flowOf(emptyList()) else repository.commandsStream(fid, cid)
-        }
-        .stateIn(
-            scope,
-            SharingStarted.Eagerly,
-            emptyList()
-        )
 
     fun selectChild(id: String, name: String) {
         _selectedChildId.value = id
@@ -93,182 +89,102 @@ class ScreenTimeViewModel(
         _actionFeedback.value = ScreenTimeFeedback(nextFeedbackId++, message)
     }
 
-    /** Remote commands need a real family; without one we say so instead of silently failing. */
-    private fun requireFamilyId(): String? =
-        _familyId.value.also {
-            if (it == null) showFeedback("Connect the child's device first — its family is not ready yet.")
-        }
+    fun clearFeedback() { _actionFeedback.value = null }
 
-    fun remoteSwitchOff(childId: String, reason: String) {
-        val cname = _selectedChildName.value
-        val fid = requireFamilyId() ?: return
+    /** Writes age-appropriate starting rules the first time a parent opens screen time for this child. */
+    fun initializeDefaultsIfNeeded(profile: AgeProfile) {
+        val fid = _familyId.value ?: return
+        val cid = _selectedChildId.value.takeIf { it.isNotBlank() } ?: return
         scope.launch {
+            runCatching { repository.initializeDefaults(fid, cid, profile) }
+                .onFailure { Log.e(TAG, "Could not write starting rules", it) }
+        }
+    }
+
+    private fun act(success: String, block: suspend (fid: String, cid: String, name: String) -> Unit) {
+        val fid = _familyId.value
+        val cid = _selectedChildId.value
+        if (fid == null) {
+            showFeedback("Connect the child's device first — its family is not ready yet.")
+            return
+        }
+        if (cid.isBlank()) { showFeedback("Choose a child first."); return }
+        val name = _selectedChildName.value
+        scope.launch {
+            _busy.value = true
             try {
-                repository.sendRemoteCommand(
-                    familyId = fid,
-                    childId = childId,
-                    childName = cname,
-                    action = RemoteAction.SWITCH_OFF_LOCK,
-                    description = "Remotely switched off screen & locked device",
-                    reason = reason,
-                    updates = mapOf("lockState" to "remote_locked", "lockReason" to reason)
-                )
-                showFeedback("🔴 Switched off & locked $cname's phone ($reason)")
+                block(fid, cid, name)
+                showFeedback(if (currentDevice.value.isOnline) success else "$success It applies as soon as $name's phone is back online.")
             } catch (e: Exception) {
-                Log.e("KGuard", "Failed to switch off phone", e)
-                showFeedback("Failed to switch off phone: ${e.localizedMessage}")
+                Log.e(TAG, "Screen time action failed", e)
+                showFeedback("Couldn't save that: ${e.localizedMessage ?: "check the connection and try again."}")
+            } finally {
+                _busy.value = false
             }
         }
     }
 
-    fun remoteUnlock(childId: String) {
-        val cname = _selectedChildName.value
-        val fid = requireFamilyId() ?: return
-        scope.launch {
-            try {
-                repository.sendRemoteCommand(
-                    familyId = fid,
-                    childId = childId,
-                    childName = cname,
-                    action = RemoteAction.UNLOCK_DEVICE,
-                    description = "Unlocked and resumed device",
-                    updates = mapOf("lockState" to "active_unlocked", "lockReason" to null)
-                )
-                showFeedback("🟢 Unlocked & resumed $cname's phone")
-            } catch (e: Exception) {
-                Log.e("KGuard", "Failed to unlock phone", e)
-                showFeedback("Failed to unlock phone: ${e.localizedMessage}")
-            }
+    // The childId parameters match the screens' existing calls; the selected child is always the target.
+
+    fun remoteSwitchOff(@Suppress("UNUSED_PARAMETER") childId: String, reason: String) =
+        act("${_selectedChildName.value}'s phone is locked.") { f, c, n -> repository.lock(f, c, n, reason.ifBlank { "Your parent has locked this phone." }, null) }
+
+    /** Locks for [hours]h[minutes]m; [startsInMinutes] > 0 schedules the lock to begin later. */
+    fun remoteTimedLock(@Suppress("UNUSED_PARAMETER") childId: String, hours: Int, minutes: Int, startsInMinutes: Int? = null) {
+        val total = hours * 60 + minutes
+        if (total <= 0 && (startsInMinutes ?: 0) <= 0) { showFeedback("Choose how long to lock the phone for."); return }
+        val label = if (total > 0) " for ${repository.formatDuration(total)}" else ""
+        act("${_selectedChildName.value}'s phone is locked$label.") { f, c, n ->
+            repository.lock(f, c, n, "Locked by your parent$label.", total.takeIf { it > 0 }, startsInMinutes)
         }
     }
 
-    fun remoteSoundAlarm(childId: String) {
-        val cname = _selectedChildName.value
-        val fid = requireFamilyId() ?: return
-        scope.launch {
-            try {
-                repository.sendRemoteCommand(
-                    familyId = fid,
-                    childId = childId,
-                    childName = cname,
-                    action = RemoteAction.SOUND_ALARM,
-                    description = "Played loud ring alert on device"
-                )
-                showFeedback("🔊 Sounding loud chime on $cname's phone")
-            } catch (e: Exception) {
-                Log.e("KGuard", "Failed to sound alarm", e)
-            }
-        }
+    /**
+     * Unlocks now. If bedtime or the daily limit is what is locking the phone, those are paused for an hour
+     * so the unlock actually takes effect; after that the normal rules apply again.
+     */
+    fun remoteUnlock(@Suppress("UNUSED_PARAMETER") childId: String, pauseMinutes: Int? = null) {
+        val state = currentDevice.value.lockState
+        val pause = pauseMinutes ?: if (state == DeviceLockState.BEDTIME_LOCKED || state == DeviceLockState.LIMIT_REACHED) 60 else 0
+        val note = if (pause > 0) " Bedtime and the daily limit are paused for ${repository.formatDuration(pause)}." else ""
+        act("${_selectedChildName.value}'s phone is unlocked.$note") { f, c, n -> repository.unlock(f, c, n, pause) }
     }
 
-    fun addBonusTime(childId: String, bonusMinutes: Int) {
-        val cname = _selectedChildName.value
-        val fid = requireFamilyId() ?: return
-        scope.launch {
-            try {
-                // No client-side newLimit: the repository applies an atomic FieldValue.increment,
-                // so two rapid taps each add their increment.
-                repository.sendRemoteCommand(
-                    familyId = fid,
-                    childId = childId,
-                    childName = cname,
-                    action = RemoteAction.ADD_BONUS_TIME,
-                    description = "Added +$bonusMinutes minutes bonus screen time",
-                    updates = mapOf("bonusMinutes" to bonusMinutes)
-                )
-                showFeedback("⭐ +$bonusMinutes min bonus screen time granted to $cname")
-            } catch (e: Exception) {
-                Log.e("KGuard", "Failed to add bonus time", e)
-            }
-        }
+    fun remoteSoundAlarm(@Suppress("UNUSED_PARAMETER") childId: String) =
+        act("Playing an alarm on ${_selectedChildName.value}'s phone for 30 seconds.") { f, c, n -> repository.soundAlarm(f, c, n) }
+
+    fun addBonusTime(@Suppress("UNUSED_PARAMETER") childId: String, bonusMinutes: Int) {
+        val childToday = currentDevice.value.usageDate ?: SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+        act("Added ${repository.formatDuration(bonusMinutes)} for today.") { f, c, n -> repository.addBonus(f, c, n, bonusMinutes, childToday) }
     }
 
-    fun updateDailyLimit(childId: String, minutes: Int, feedbackMessage: String? = null) {
-        val cname = _selectedChildName.value
-        val fid = requireFamilyId() ?: return
-        scope.launch {
-            try {
-                repository.sendRemoteCommand(
-                    familyId = fid,
-                    childId = childId,
-                    childName = cname,
-                    action = RemoteAction.SET_DAILY_LIMIT,
-                    description = "Updated daily screen time limit to $minutes mins",
-                    updates = mapOf("dailyLimitMinutes" to minutes)
-                )
-                showFeedback(feedbackMessage ?: "Updated daily limit to $minutes mins for $cname")
-            } catch (e: Exception) {
-                Log.e("KGuard", "Failed to update daily limit", e)
-            }
+    fun updateDailyLimit(@Suppress("UNUSED_PARAMETER") childId: String, minutes: Int, feedbackMessage: String? = null) =
+        act(feedbackMessage ?: if (minutes <= 0) "Daily limit removed." else "Daily limit set to ${repository.formatDuration(minutes)}.") { f, c, n ->
+            repository.setDailyLimit(f, c, n, minutes)
         }
-    }
 
     fun applyAgeRecommendation(childId: String, profile: AgeProfile) {
-        val recommendedLimit = ScreenTimeConfig.getDefaultLimitForAge(profile)
-        // The recommendation's own message is passed through so the spawned
-        // updateDailyLimit can no longer overwrite it with the generic one.
-        updateDailyLimit(
-            childId,
-            recommendedLimit,
-            feedbackMessage = "Applied recommended limit of $recommendedLimit mins for ${profile.title}"
-        )
+        val limit = ScreenTimeConfig.getDefaultLimitForAge(profile)
+        updateDailyLimit(childId, limit, "Applied the recommended ${repository.formatDuration(limit)} for ${profile.title}.")
     }
 
-    fun updateBedtimeSchedule(childId: String, start: String, end: String, enabled: Boolean) {
-        val cname = _selectedChildName.value
-        val fid = requireFamilyId() ?: return
-        scope.launch {
-            try {
-                repository.sendRemoteCommand(
-                    familyId = fid,
-                    childId = childId,
-                    childName = cname,
-                    action = RemoteAction.TOGGLE_BEDTIME,
-                    description = "Updated bedtime schedule ($start - $end, enabled=$enabled)",
-                    updates = mapOf("bedtimeStart" to start, "bedtimeEnd" to end, "bedtimeEnabled" to enabled)
-                )
-                showFeedback("Bedtime schedule updated for $cname")
-            } catch (e: Exception) {
-                Log.e("KGuard", "Failed to update bedtime", e)
-            }
+    fun updateBedtimeSchedule(@Suppress("UNUSED_PARAMETER") childId: String, start: String, end: String, enabled: Boolean) =
+        act(if (enabled) "Bedtime set to $start–$end." else "Bedtime turned off.") { f, c, n -> repository.setBedtime(f, c, n, start, end, enabled) }
+
+    fun updateSchoolSchedule(@Suppress("UNUSED_PARAMETER") childId: String, start: String, end: String, enabled: Boolean) =
+        act(if (enabled) "School hours set to $start–$end on weekdays." else "School hours turned off.") { f, c, n ->
+            repository.setSchoolHours(f, c, n, start, end, enabled)
         }
-    }
 
-    fun updateSchoolSchedule(childId: String, start: String, end: String, enabled: Boolean) {
-        val cname = _selectedChildName.value
-        val fid = requireFamilyId() ?: return
-        scope.launch {
-            try {
-                repository.sendRemoteCommand(
-                    familyId = fid,
-                    childId = childId,
-                    childName = cname,
-                    action = RemoteAction.TOGGLE_SCHOOL_MODE,
-                    description = "Updated school focus hours ($start - $end, enabled=$enabled)",
-                    updates = mapOf("schoolStart" to start, "schoolEnd" to end, "schoolEnabled" to enabled)
-                )
-                showFeedback("School focus schedule updated for $cname")
-            } catch (e: Exception) {
-                Log.e("KGuard", "Failed to update school schedule", e)
-            }
-        }
-    }
-
-    fun clearFeedback() {
-        _actionFeedback.value = null
-    }
-
-    // Legacy overloads
-    fun updateDailyLimit(minutes: Int) {
-        updateDailyLimit(_selectedChildId.value, minutes)
-    }
+    // Legacy overloads used by older call sites.
+    fun updateDailyLimit(minutes: Int) = updateDailyLimit(_selectedChildId.value, minutes)
 
     fun toggleSchoolTime(enabled: Boolean) {
         val cur = currentDevice.value
         updateSchoolSchedule(_selectedChildId.value, cur.schoolStart, cur.schoolEnd, enabled)
     }
 
-    fun applyAgeRecommendation(profile: AgeProfile) {
-        applyAgeRecommendation(_selectedChildId.value, profile)
-    }
+    fun applyAgeRecommendation(profile: AgeProfile) = applyAgeRecommendation(_selectedChildId.value, profile)
+
+    private companion object { const val TAG = "KGuardScreenTime" }
 }

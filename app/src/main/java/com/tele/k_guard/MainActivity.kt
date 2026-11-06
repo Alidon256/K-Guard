@@ -11,6 +11,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.lifecycleScope
+import com.tele.k_guard.data.repository.UserPreferencesRepository
+import com.tele.k_guard.service.KGuardCompanionService
+import kotlinx.coroutines.launch
 import com.tele.k_guard.ui.navigation.AppNavigation
 import com.tele.k_guard.ui.theme.KGuardTheme
 
@@ -35,6 +39,12 @@ class MainActivity : ComponentActivity() {
         com.tele.k_guard.service.KGuardMessagingService.ensureChannel(this)
         // Keep the child-device watchdog alive whenever the app itself runs (boot + alarm cover the rest).
         com.tele.k_guard.protection.DeviceProtection.scheduleWatchdog(this)
+        // A paired child's phone runs the enforcement engine (screen time, locks, app rules, web sync).
+        lifecycleScope.launch {
+            UserPreferencesRepository(applicationContext).isChildDeviceFlow.collect { isChild ->
+                if (isChild) KGuardCompanionService.startCompanionService(this@MainActivity)
+            }
+        }
 
         applyIntentRoute(intent)
 

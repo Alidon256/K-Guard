@@ -1,1 +1,2 @@
-# Add domains for this category, one per line.
+# Scam, fake-giveaway and "free in-game currency" sites. Add domains a parent reports here.
+# These change constantly; for production, add a maintained phishing feed (see docs).

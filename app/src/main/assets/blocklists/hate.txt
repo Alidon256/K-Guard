@@ -1,1 +1,6 @@
-# Add domains for this category, one per line.
+# Hate and extremist sites.
+stormfront.org
+kiwifarms.net
+kiwifarms.st
+amren.com
+vdare.com

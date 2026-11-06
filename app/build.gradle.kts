@@ -7,6 +7,14 @@ plugins {
     alias(libs.plugins.google.gms.google.services)
 }
 
+// K-Guard Live's AI model (see AiConfig / GeminiKeyRotationManager). Set these in local.properties, which is
+// not committed: kguard.ai.url, kguard.ai.model, kguard.ai.key, kguard.gemini.keys (comma-separated).
+private val localProps = Properties().apply {
+    rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
+}
+private fun localProp(name: String): String =
+    (localProps.getProperty(name) ?: "").replace("\\", "\\\\").replace("\"", "\\\"")
+
 /**
  * Release signing lives outside git: a `keystore.properties` at the repo root (gitignored) or
  * `~/keystores/k-guard-release.properties` on the build machine. Without one, the release
@@ -31,6 +39,11 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        buildConfigField("String", "KGUARD_AI_URL", "\"${localProp("kguard.ai.url")}\"")
+        buildConfigField("String", "KGUARD_AI_MODEL", "\"${localProp("kguard.ai.model")}\"")
+        buildConfigField("String", "KGUARD_AI_KEY", "\"${localProp("kguard.ai.key")}\"")
+        buildConfigField("String", "KGUARD_GEMINI_KEYS", "\"${localProp("kguard.gemini.keys")}\"")
     }
 
     signingConfigs {
@@ -59,6 +72,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 

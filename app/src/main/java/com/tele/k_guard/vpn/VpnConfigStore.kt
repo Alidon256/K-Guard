@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.asStateFlow
 data class VpnConfig(
     val enabled: Boolean = false,
     val childId: String? = null,
+    /** Set on a paired child's phone, where the parent's settings arrive from Firestore. */
+    val familyId: String? = null,
     val policy: VpnPolicy = VpnPolicy(AgeProfile.KIDS_3_7) // strictest until a child is chosen
 )
 
@@ -26,6 +28,7 @@ class VpnConfigStore(context: Context) {
     fun load(): VpnConfig = VpnConfig(
         enabled = prefs.getBoolean("enabled", false),
         childId = prefs.getString("childId", null),
+        familyId = prefs.getString("familyId", null),
         policy = VpnPolicy(
             ageProfile = AgeProfile.fromId(prefs.getString("age", AgeProfile.KIDS_3_7.id)),
             rules = (prefs.getString("rules", "") ?: "").split(',').mapNotNull {
@@ -50,6 +53,33 @@ class VpnConfigStore(context: Context) {
     }
 
     fun setEnabled(enabled: Boolean) { prefs.edit().putBoolean("enabled", enabled).apply() }
+
+    /**
+     * Child's phone: replaces the whole policy with what the parent set. The VPN service reads this store on
+     * every DNS lookup, so the change applies to the next lookup without restarting the tunnel. Cached AI
+     * verdicts are invalidated when the age group, rules or AI switch change.
+     */
+    fun applyRemote(familyId: String, childId: String, ageProfile: String, rules: Map<String, String>, settings: WebSettings) {
+        val rulesStr = rules.entries.joinToString(",") { "${it.key}=${it.value}" }
+        val verdictsStale = prefs.getString("age", null) != ageProfile ||
+            prefs.getString("rules", "") != rulesStr ||
+            prefs.getBoolean("ai", true) != settings.aiFilter
+        val edit = prefs.edit()
+            .putString("familyId", familyId)
+            .putString("childId", childId)
+            .putString("age", ageProfile)
+            .putString("rules", rulesStr)
+            .putStringSet("customBlock", settings.customBlock)
+            .putStringSet("customAllow", settings.customAllow)
+            .putBoolean("edu", settings.educationalAllow)
+            .putBoolean("ai", settings.aiFilter)
+        if (verdictsStale) edit.putInt(VerdictCache.GEN_KEY, prefs.getInt(VerdictCache.GEN_KEY, 0) + 1)
+        edit.apply()
+        Shared._customBlock.value = settings.customBlock
+        Shared._customAllow.value = settings.customAllow
+        Shared._educational.value = settings.educationalAllow
+        Shared._aiFilter.value = settings.aiFilter
+    }
 
     fun addCustomBlock(domain: String): Boolean {
         val d = cleanDomain(domain) ?: return false
@@ -90,11 +120,6 @@ class VpnConfigStore(context: Context) {
         Shared._aiFilter.value = on
     }
 
-    private fun cleanDomain(raw: String): String? {
-        val d = DomainFilter.normalise(raw.removePrefix("https://").removePrefix("http://").removePrefix("www.").substringBefore('/'))
-        return d.takeIf { DOMAIN.matches(it) }
-    }
-
     fun removeCustomBlock(domain: String) {
         val d = cleanDomain(domain) ?: return // an invalid input can never match a stored, valid domain
         val next = load().policy.customBlock - d
@@ -111,13 +136,21 @@ class VpnConfigStore(context: Context) {
      * One shared, app-wide state for every VpnConfigStore instance: the service and the settings
      * screens must observe the same values, not per-instance copies that drift apart.
      */
-    private companion object Shared {
-        val _customBlock = MutableStateFlow<Set<String>>(emptySet())
-        val _customAllow = MutableStateFlow<Set<String>>(emptySet())
-        val _educational = MutableStateFlow(true)
-        val _aiFilter = MutableStateFlow(true)
+    companion object Shared {
+        /** Turns "https://www.Example.com/page" into "example.com"; null if it is not a website name. */
+        fun cleanDomain(raw: String): String? {
+            // Keyboards often insert spaces after dots ("example. com"); web addresses never contain spaces.
+            val compact = raw.filterNot { it.isWhitespace() }.lowercase()
+            val d = DomainFilter.normalise(compact.removePrefix("https://").removePrefix("http://").removePrefix("www.").substringBefore('/'))
+            return d.takeIf { DOMAIN.matches(it) }
+        }
 
-        fun initFrom(prefs: android.content.SharedPreferences) {
+        internal val _customBlock = MutableStateFlow<Set<String>>(emptySet())
+        internal val _customAllow = MutableStateFlow<Set<String>>(emptySet())
+        internal val _educational = MutableStateFlow(true)
+        internal val _aiFilter = MutableStateFlow(true)
+
+        internal fun initFrom(prefs: android.content.SharedPreferences) {
             synchronized(this) {
                 _customBlock.value = prefs.getStringSet("customBlock", emptySet()) ?: emptySet()
                 _customAllow.value = prefs.getStringSet("customAllow", emptySet()) ?: emptySet()
@@ -126,7 +159,7 @@ class VpnConfigStore(context: Context) {
             }
         }
 
-        val DOMAIN = Regex("^([a-z0-9]([a-z0-9-]*[a-z0-9])?\\.)+[a-z]{2,}$")
+        private val DOMAIN = Regex("^([a-z0-9]([a-z0-9-]*[a-z0-9])?\\.)+[a-z]{2,}$")
     }
 }
 
