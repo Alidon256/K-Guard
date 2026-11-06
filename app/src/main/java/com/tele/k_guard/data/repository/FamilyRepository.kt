@@ -44,6 +44,18 @@ object FamilyRepository {
         Log.d("KGuard", "FamilyRepository: signInWithCredential success")
     }
 
+    /**
+     * Account-less sign-in for pairing a child device: no Google account is needed on the
+     * child's phone. The anonymous identity is just a placeholder UID; the 6-digit pairing
+     * code is the real credential that binds it to the child profile. Requires the Anonymous
+     * sign-in provider to be enabled in the Firebase console.
+     */
+    suspend fun signInAnonymously() {
+        Log.d("KGuard", "FamilyRepository: signInAnonymously")
+        auth.signInAnonymously().await()
+        Log.d("KGuard", "FamilyRepository: signInAnonymously success")
+    }
+
     fun signOut() {
         Log.d("KGuard", "FamilyRepository: signOut")
         auth.signOut()

@@ -113,6 +113,28 @@ class SessionViewModel : ViewModel() {
     /** The single sign-in path: a Google credential from Credential Manager. */
     fun signInWithCredential(credential: AuthCredential) = launchBusy { repo.signInWithCredential(credential) }
 
+    /**
+     * Pair a child device without any account: sign in anonymously if needed, then redeem the
+     * parent's 6-digit code, which binds the child profile to this device's identity.
+     */
+    fun pairChildDevice(code: String) = launchBusy {
+        if (repo.currentUser == null) {
+            runCatching { repo.signInAnonymously() }
+                .onFailure {
+                    throw IllegalStateException(
+                        "Could not create a device identity. Ask the parent to enable Anonymous sign-in for K-Guard in the Firebase console.",
+                        it
+                    )
+                }
+        }
+        val res = repo.redeemPairingCode(code)
+        pairedDevice = true
+        val fid = res["familyId"] as? String ?: error("Pairing response is missing the family id.")
+        val cid = res["childId"] as? String
+        _familyId.value = fid
+        if (cid != null) _selectedChildId.value = cid
+    }
+
     fun signOut() {
         // Clear synchronously; the auth listener clears the rest when the user is nulled.
         pairedDevice = false
@@ -143,16 +165,6 @@ class SessionViewModel : ViewModel() {
 
     fun createPairingCode(childId: String) = launchBusy { _pairingCode.value = repo.createPairingCode(childId) }
     fun sendChildOtp(childId: String) = createPairingCode(childId)
-
-    fun redeemPairingCode(code: String, onDone: () -> Unit = {}) = launchBusy {
-        val res = repo.redeemPairingCode(code)
-        pairedDevice = true
-        val fid = res["familyId"] as? String ?: error("Pairing response is missing the family id.")
-        val cid = res["childId"] as? String
-        _familyId.value = fid
-        if (cid != null) _selectedChildId.value = cid
-        onDone()
-    }
 
     fun review(eventId: String, action: ParentAction, note: String) = launchBusy {
         val fid = _familyId.value ?: error("Your family is not ready yet.")

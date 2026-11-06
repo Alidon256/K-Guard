@@ -51,8 +51,9 @@ import com.tele.k_guard.ui.theme.KGuardTheme
 import com.tele.k_guard.viewmodel.SessionViewModel
 
 /**
- * The one auth screen. Sign-in is Google-only; no email/password fields exist anywhere.
- * Child devices additionally pair with the 6-digit OTP their parent generated.
+ * The one auth screen. Parents sign in with Google only; child devices need NO account —
+ * they pair with the 6-digit code the parent's dashboard generates, which creates an
+ * anonymous device identity under the hood.
  */
 @Composable
 fun SignInScreen(
@@ -69,8 +70,8 @@ fun SignInScreen(
     SignInContent(
         busy = busy,
         error = error,
-        onGoogleSignIn = { isChild ->
-            Log.d("KGuard", "UI: User clicked Sign In with Google (isChild=$isChild)")
+        onGoogleSignIn = {
+            Log.d("KGuard", "UI: User clicked Sign In with Google (parent)")
             scope.launch {
                 try {
                     val credentialManager = CredentialManager.create(context)
@@ -92,11 +93,7 @@ fun SignInScreen(
                         val firebaseCredential = GoogleAuthProvider.getCredential(googleIdTokenCredential.idToken, null)
                         Log.d("KGuard", "UI: Google credential retrieved successfully, signing in with Firebase...")
                         session.signInWithCredential(firebaseCredential)
-                        if (!isChild) {
-                            onParentSignedIn()
-                        } else {
-                            Log.d("KGuard", "UI: Child signed in with Google, waiting for pairing OTP code entry.")
-                        }
+                        onParentSignedIn()
                     } else {
                         Log.e("KGuard", "UI: Unexpected credential type received from Credential Manager")
                     }
@@ -105,8 +102,9 @@ fun SignInScreen(
                 }
             }
         },
-        onRedeemOtp = { otp ->
-            session.redeemPairingCode(otp, onDone = onChildPaired)
+        onPairWithCode = { code ->
+            session.pairChildDevice(code)
+            onChildPaired()
         }
     )
 }
@@ -115,8 +113,8 @@ fun SignInScreen(
 fun SignInContent(
     busy: Boolean,
     error: String?,
-    onGoogleSignIn: (isChild: Boolean) -> Unit = {},
-    onRedeemOtp: (String) -> Unit = {}
+    onGoogleSignIn: () -> Unit = {},
+    onPairWithCode: (String) -> Unit = {}
 ) {
     var isChildMode by rememberSaveable { mutableStateOf(false) }
     var otpCode by rememberSaveable { mutableStateOf("") }
@@ -175,7 +173,7 @@ fun SignInContent(
             Spacer(Modifier.height(16.dp))
             KGPrimaryButton(
                 text = "Continue with Google",
-                onClick = { onGoogleSignIn(false) },
+                onClick = { onGoogleSignIn() },
                 modifier = Modifier.fillMaxWidth(),
                 leading = {
                     Image(
@@ -187,28 +185,7 @@ fun SignInContent(
             )
         } else {
             Text(
-                "Step 1 · Sign in with the child's Google account to authorise this device.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(12.dp))
-            KGPrimaryButton(
-                text = "Continue with Google",
-                onClick = { onGoogleSignIn(true) },
-                modifier = Modifier.fillMaxWidth(),
-                leading = {
-                    Image(
-                        painter = painterResource(R.drawable.google_g),
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            )
-
-            Spacer(Modifier.height(20.dp))
-
-            Text(
-                "Step 2 · Enter the 6-digit code from your parent's dashboard.",
+                "No account needed. Enter the 6-digit code your parent's dashboard generated — it links this phone to your family securely.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -224,7 +201,7 @@ fun SignInContent(
             Spacer(Modifier.height(16.dp))
             KGPrimaryButton(
                 text = "Pair this device",
-                onClick = { onRedeemOtp(otpCode.trim()) },
+                onClick = { onPairWithCode(otpCode.trim()) },
                 enabled = validOtp,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -247,7 +224,7 @@ fun SignInScreenPreview() {
             busy = false,
             error = null,
             onGoogleSignIn = {},
-            onRedeemOtp = {}
+            onPairWithCode = {}
         )
     }
 }
