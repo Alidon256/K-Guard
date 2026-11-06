@@ -55,6 +55,13 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+        <receiver
+            android:name=".protection.ProtectionReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.tele.k_guard.protection.WATCHDOG" />
+            </intent-filter>
+        </receiver>
         <service
             android:name=".vpn.KGuardVpnService"
             android:exported="false"

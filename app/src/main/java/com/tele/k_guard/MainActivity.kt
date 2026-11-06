@@ -33,6 +33,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         com.tele.k_guard.service.KGuardMessagingService.ensureChannel(this)
+        // Keep the child-device watchdog alive whenever the app itself runs (boot + alarm cover the rest).
+        com.tele.k_guard.protection.DeviceProtection.scheduleWatchdog(this)
 
         applyIntentRoute(intent)
 

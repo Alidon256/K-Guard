@@ -36,6 +36,7 @@ import com.tele.k_guard.ui.screens.ReviewQueueScreen
 import com.tele.k_guard.ui.screens.ScreenTimeScreen
 import com.tele.k_guard.ui.screens.SignInScreen
 import com.tele.k_guard.ui.screens.TextModerationScreen
+import com.tele.k_guard.ui.screens.UninstallProtectionScreen
 import com.tele.k_guard.ui.screens.WebProtectionScreen
 import com.tele.k_guard.viewmodel.AgeProfileViewModel
 import com.tele.k_guard.viewmodel.AgeProfileViewModelFactory
@@ -159,8 +160,19 @@ fun AppNavigation(
                         // On a freshly paired child device the children list may not have loaded
                         // yet, so prefer the childId captured during pairing.
                         userPreferencesRepository.saveChildDeviceMode(true, session.selectedChildId.value ?: activeChildId)
-                        navController.navigate(Screen.ChildDashboard.route) { popUpTo(0) }
+                        navController.navigate(Screen.UninstallProtection.route) { popUpTo(0) }
                     }
+                }
+            )
+        }
+
+        composable(Screen.UninstallProtection.route) {
+            UninstallProtectionScreen(
+                onProtected = {
+                    navController.navigate(Screen.ChildDashboard.route) { popUpTo(0) }
+                },
+                onSkipped = {
+                    navController.navigate(Screen.ChildDashboard.route) { popUpTo(0) }
                 }
             )
         }

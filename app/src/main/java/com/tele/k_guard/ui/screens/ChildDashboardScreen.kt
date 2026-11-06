@@ -13,11 +13,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -35,6 +38,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.tele.k_guard.data.model.ChildProfile
+import com.tele.k_guard.protection.DeviceProtection
 import com.tele.k_guard.ui.components.KGCard
 import com.tele.k_guard.ui.components.KGSectionHeader
 import com.tele.k_guard.ui.components.KGuardLogo
@@ -53,6 +57,9 @@ fun ChildDashboardScreen(
     childProfile: ChildProfile?,
     onNavigateToProfile: () -> Unit = {}
 ) {
+    // Uninstall protection lives outside Compose state (DevicePolicyManager); re-check on each entry.
+    val context = LocalContext.current
+    val adminActive = remember { DeviceProtection.isAdminActive(context) }
     Scaffold(
         topBar = {
             KGuardTopAppBar(
@@ -136,12 +143,23 @@ fun ChildDashboardScreen(
                 title = "App Access & Web Firewall",
                 description = "Your parent's protection rules block harmful sites and apps on this device."
             )
-            ProtectionFactCard(
-                icon = Icons.Default.Lock,
-                tint = KGColors.success,
-                title = "Uninstall Protection Active",
-                description = "This device is supervised by K-Guard. A security PIN is required to uninstall or disable protection."
-            )
+            if (adminActive) {
+                ProtectionFactCard(
+                    icon = Icons.Default.Lock,
+                    tint = KGColors.success,
+                    title = "Uninstall Protection Active",
+                    description = "This device is supervised by K-Guard. The app cannot be removed while protection is on."
+                )
+            } else {
+                // Weakened state: the card itself is the fix — tapping launches system activation.
+                ProtectionFactCard(
+                    icon = Icons.Default.Security,
+                    tint = KGColors.warning,
+                    title = "Uninstall protection is off",
+                    description = "Tap to turn it back on so this app cannot be removed.",
+                    onClick = { context.startActivity(DeviceProtection.activationIntent(context)) }
+                )
+            }
         }
     }
 }
@@ -152,9 +170,13 @@ private fun ProtectionFactCard(
     icon: ImageVector,
     tint: Color,
     title: String,
-    description: String
+    description: String,
+    onClick: (() -> Unit)? = null
 ) {
-    KGCard(modifier = Modifier.fillMaxWidth()) {
+    KGCard(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onClick
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 modifier = Modifier

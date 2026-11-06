@@ -17,6 +17,7 @@ sealed class Screen(val route: String) {
     object Privacy : Screen("privacy")
     object WebProtection : Screen("web_protection")
     object ChildPinSetup : Screen("child_pin_setup")
+    object UninstallProtection : Screen("uninstall_protection")
     object ChildDashboard : Screen("child_dashboard")
     object AppDetail : Screen("app_detail?appId={appId}") {
         fun create(appId: String) = "app_detail?appId=$appId"
