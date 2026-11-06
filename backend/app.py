@@ -64,6 +64,28 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="KGuard AI", lifespan=lifespan)
 
 
+@app.get("/")
+async def root() -> dict[str, str]:
+    return {
+        "service": "KGuard AI",
+        "docs": "/docs",
+        "openapi": "/openapi.json",
+        "scan": "/scan",
+        "health": "/health",
+    }
+
+
+@app.get("/health")
+async def health() -> dict[str, str]:
+    if model is None or processor is None:
+        raise HTTPException(status_code=503, detail="KGuard model is not ready.")
+    return {
+        "status": "ok",
+        "model": MODEL_ID,
+        "device": str(DEVICE),
+    }
+
+
 def load_system_prompt() -> str:
     try:
         return SAFETY_PROMPT_PATH.read_text(encoding="utf-8").strip()
