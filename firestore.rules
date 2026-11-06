@@ -1,0 +1,79 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function family(fid) { return get(/databases/$(database)/documents/families/$(fid)); }
+    function isParent(fid) {
+      return signedIn() && request.auth.uid in family(fid).data.parentUids;
+    }
+    function onlyChanges(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+    }
+
+    // User profile: owner reads; writes only to non-privileged fields (role/familyId set by Functions).
+    match /users/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow create: if signedIn() && request.auth.uid == uid
+                    && request.resource.data.keys().hasOnly(['displayName', 'fcmTokens']);
+      allow update: if signedIn() && request.auth.uid == uid
+                    && onlyChanges(['displayName', 'fcmTokens']);
+    }
+
+    match /families/{familyId} {
+      // Membership and ownership are created by Cloud Functions only.
+      allow read: if isParent(familyId);
+      allow update: if isParent(familyId)
+                    && onlyChanges(['privacy', 'pinHash', 'pinSalt']);
+      allow create, delete: if false;
+
+      match /children/{childId} {
+        allow read: if isParent(familyId)
+                    || (signedIn() && resource.data.linkedUid == request.auth.uid);
+        allow create, update: if isParent(familyId)
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 40
+          && request.resource.data.ageProfile in
+               ['KIDS_3_7', 'PRETEENS_8_12', 'TEENS_13_17', 'ADULTS_18_PLUS']
+          && (!('linkedUid' in request.resource.data.diff(resource == null ? {} : resource.data).affectedKeys()));
+        allow delete: if isParent(familyId);
+      }
+
+      // Events are written by Functions (Admin SDK). Parents may only record their review.
+      match /events/{eventId} {
+        allow read: if isParent(familyId);
+        allow create, delete: if false;
+        allow update: if isParent(familyId)
+                      && onlyChanges(['status', 'parentAction', 'parentNote', 'reviewedAt'])
+                      && request.resource.data.status in ['open', 'reviewed']
+                      && (!('parentAction' in request.resource.data)
+                          || request.resource.data.parentAction in ['allow', 'keep_blocked', 'dismiss']);
+      }
+
+      match /apps/{appId} {
+        // Parents can read all apps; linked children can read apps assigned to their profile
+        allow read: if isParent(familyId)
+                    || (signedIn() && resource.data.childLinkedUid == request.auth.uid);
+        // Parents can approve/reject, configure limits, and manage apps
+        allow write: if isParent(familyId);
+        // Children linked to this family can create an install approval request in PENDING_REVIEW status
+        allow create: if signedIn()
+                      && request.resource.data.childLinkedUid == request.auth.uid
+                      && request.resource.data.approvalStatus == 'PENDING_REVIEW';
+      }
+      match /screenTime/{childId} {
+        allow read: if isParent(familyId);
+        allow write: if isParent(familyId);
+      }
+      match /devices/{childId} {
+        allow read: if isParent(familyId) || (signedIn() && resource.data.linkedUid == request.auth.uid);
+        allow write: if isParent(familyId) || (signedIn() && request.resource.data.linkedUid == request.auth.uid);
+      }
+      match /commands/{commandId} {
+        allow read, write: if isParent(familyId) || signedIn();
+      }
+    }
+
+    match /{document=**} { allow read, write: if false; }
+  }
+}

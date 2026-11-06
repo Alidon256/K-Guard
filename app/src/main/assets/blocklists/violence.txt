@@ -1,0 +1,2 @@
+# Starter list. One domain per line.
+bestgore.com
