@@ -54,7 +54,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -174,8 +173,7 @@ private fun ChildRowCard(
             Column(Modifier.weight(1f)) {
                 Text(child.name, style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "${child.age.title} · ${child.age.ageRange}" +
-                        if (child.email.isNotBlank()) " · ${child.email}" else "",
+                    "${child.age.title} · ${child.age.ageRange}",
                     style = MaterialTheme.typography.bodySmall,
                     color = KGColors.inkMuted
                 )
@@ -220,7 +218,7 @@ private fun ChildAvatar(child: ChildProfile, size: androidx.compose.ui.unit.Dp) 
     }
 }
 
-/** Create or edit a child: name, email, photoUrl from device gallery, age group, per-category rules and reveal permission. */
+/** Create or edit a child: name (required), optional photo from the device gallery, age group, per-category rules and reveal permission. Child devices pair anonymously, so no email is collected. */
 @Composable
 fun ChildEditorScreen(
     session: SessionViewModel,
@@ -284,7 +282,6 @@ fun ChildEditorContent(
 
     val scope = rememberCoroutineScope()
     var name by remember(existing?.id) { mutableStateOf(existing?.name ?: "") }
-    var email by remember(existing?.id) { mutableStateOf(existing?.email ?: "") }
     var photoUrl by remember(existing?.id) { mutableStateOf(existing?.photoUrl ?: "") }
     var ageId by remember(existing?.id) { mutableStateOf(existing?.ageProfile ?: AgeProfile.PRETEENS_8_12.id) }
     var rules by remember(existing?.id) { mutableStateOf(existing?.categoryRules ?: emptyMap()) }
@@ -357,15 +354,8 @@ fun ChildEditorContent(
                 value = name,
                 onValueChange = { name = it.take(40) },
                 label = "Child's name",
-                isError = name.isBlank()
-            )
-            Spacer(Modifier.height(12.dp))
-            KGTextField(
-                value = email,
-                onValueChange = { email = it.trim() },
-                label = "Child's Google Email",
-                keyboardType = KeyboardType.Email,
-                supportingText = "Used when pairing your child's Google account."
+                isError = name.isBlank(),
+                supportingText = "Required. Everything else on this form is optional."
             )
 
             // -------------------------------------------------------------- Age group
@@ -505,7 +495,7 @@ fun ChildEditorContent(
                 onClick = {
                     onSaveChild(
                         (existing ?: ChildProfile()).copy(
-                            name = name, email = email, photoUrl = photoUrl, ageProfile = ageId, categoryRules = rules,
+                            name = name, email = existing?.email ?: "", photoUrl = photoUrl, ageProfile = ageId, categoryRules = rules,
                             allowReveal = allowReveal && (age == AgeProfile.TEENS_13_17 || age == AgeProfile.ADULTS_18_PLUS)
                         )
                     )
